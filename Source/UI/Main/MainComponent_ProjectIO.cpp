@@ -213,7 +213,9 @@ void MainComponent::openProjectFile(const juce::File &file) {
                 if (auto *vocoder = safeThis->editorController
                                         ? safeThis->editorController->getVocoder()
                                         : nullptr;
-                    vocoder && !vocoder->isLoaded()) {
+                    vocoder && !vocoder->isLoaded() &&
+                    safeThis->editorController->getSynthesisEngineType() ==
+                        SynthesisEngineType::Vocoder) {
                   auto modelPath = PlatformPaths::getVocoderModelFile();
                   if (modelPath.exists()) {
                     if (!vocoder->loadModel(modelPath)) {
@@ -420,7 +422,9 @@ void MainComponent::loadAudioFile(const juce::File &file) {
         if (auto *vocoder = safeThis->editorController
                                 ? safeThis->editorController->getVocoder()
                                 : nullptr;
-            vocoder && !vocoder->isLoaded()) {
+            vocoder && !vocoder->isLoaded() &&
+            safeThis->editorController->getSynthesisEngineType() ==
+                SynthesisEngineType::Vocoder) {
           auto modelPath = PlatformPaths::getVocoderModelFile();
           if (modelPath.exists()) {
             if (!vocoder->loadModel(modelPath)) {
