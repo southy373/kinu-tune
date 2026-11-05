@@ -56,7 +56,7 @@ Write-Host "setup.exe -> exit code $($run.ExitCode)"
 if ($run.ExitCode -ne 0) { $failures += "the installer exited with $($run.ExitCode)" }
 
 foreach ($path in $dll, "$vst3\Contents\x86_64-win\onnxruntime.dll", "$models\fcpe.onnx", "$models\cent_table.bin",
-                  "$models\mel_filterbank.bin", "$models\pc_nsf_hifigan.onnx", "$models\GAME", $uninstaller,
+                  "$models\mel_filterbank.bin", $uninstaller,
                   "$appDir\LICENSE", "$appDir\THIRD_PARTY_NOTICES.txt", "$appDir\licenses", $uninstallKey) {
     if (-not (Test-Path $path)) { $failures += "missing after install: $path" }
 }

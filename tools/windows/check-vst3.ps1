@@ -3,8 +3,7 @@
 # Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 #
 # Checks a built Windows VST3 the way a host uses it. Run from the repository
-# root on a Windows runner after building PitchNetPlugin_VST3 (configuring
-# also downloads the GAME models into Resources/models/GAME):
+# root on a Windows runner after building PitchNetPlugin_VST3:
 #
 #   pwsh tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3"
 #
@@ -37,7 +36,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $failures = @()
-$modelFiles = "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin", "pc_nsf_hifigan.onnx"
+$modelFiles = "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin"
 
 $Vst3 = (Resolve-Path $Vst3).Path
 $dll = Join-Path $Vst3 "Contents\x86_64-win\Kinu Tune.vst3"
@@ -59,7 +58,6 @@ function Run-Host([string] $label, [string] $exe) {
 function Install-Models([string] $destination) {
     New-Item -ItemType Directory -Force -Path $destination | Out-Null
     foreach ($f in $modelFiles) { Copy-Item "Resources/models/$f" $destination }
-    Copy-Item -Recurse "Resources/models/GAME" $destination
 }
 
 # --- 0. The plug-in must not import the Visual C++ runtime -------------------
