@@ -3323,7 +3323,9 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
         auto *vocoder = safeThis->editorController
                             ? safeThis->editorController->getVocoder()
                             : nullptr;
-        if (vocoder && !vocoder->isLoaded())
+        if (vocoder && !vocoder->isLoaded() &&
+            safeThis->editorController->getSynthesisEngineType() ==
+                SynthesisEngineType::Vocoder)
         {
           auto modelPath = PlatformPaths::getVocoderModelFile();
           if (modelPath.exists())
