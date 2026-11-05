@@ -35,11 +35,15 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      # Release tags keep the original Kinu Tune identity. Test builds from a branch
+      # use the separate Kinu Tune Dev identity so both can coexist in a DAW.
       # Use the runner's default Visual Studio generator (as upstream PitchNet
       # does) and the CPU build of ONNX Runtime; DirectML is the Windows
       # default in CMakeLists.txt, so turn it off explicitly.
       - name: Configure
-        run: cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_DEV_BUILD=OFF -DPITCHNET_ARA_DIAGNOSTICS=OFF -DPITCHNET_BUILD_TESTS=OFF
+        env:
+          DEV_BUILD: ${{ inputs.ref != '' }}
+        run: cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_DEV_BUILD=$env:DEV_BUILD -DPITCHNET_ARA_DIAGNOSTICS=OFF -DPITCHNET_BUILD_TESTS=OFF
 
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
@@ -48,15 +52,23 @@ jobs:
       # it, including under an older Visual C++ runtime. See the script.
       - name: Check the VST3 like a host does
         shell: pwsh
-        run: ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3"
+        env:
+          DEV_BUILD: ${{ inputs.ref != '' }}
+        run: |
+          $product = if ($env:DEV_BUILD -eq "true") { "Kinu Tune Dev" } else { "Kinu Tune" }
+          ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/$product.vst3"
 
       - name: Package
         shell: pwsh
+        env:
+          DEV_BUILD: ${{ inputs.ref != '' }}
         run: |
+          $product = if ($env:DEV_BUILD -eq "true") { "Kinu Tune Dev" } else { "Kinu Tune" }
           $version = "$env:RELEASE_TAG".TrimStart('v')
-          $name = "Kinu-Tune-$version-Windows-x64"
+          $prefix = if ($env:DEV_BUILD -eq "true") { "Kinu-Tune-Dev" } else { "Kinu-Tune" }
+          $name = "$prefix-$version-Windows-x64"
           New-Item -ItemType Directory -Force -Path "$name/models", "$name/licenses" | Out-Null
-          Copy-Item -Recurse "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3" "$name/"
+          Copy-Item -Recurse "build/PitchNetPlugin_artefacts/Release/VST3/$product.vst3" "$name/"
           foreach ($f in "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin") {
             Copy-Item "Resources/models/$f" "$name/models/"
           }
