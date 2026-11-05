@@ -39,7 +39,8 @@ $failures = @()
 $modelFiles = "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin"
 
 $Vst3 = (Resolve-Path $Vst3).Path
-$dll = Join-Path $Vst3 "Contents\x86_64-win\Kinu Tune.vst3"
+$productName = [System.IO.Path]::GetFileNameWithoutExtension($Vst3)
+$dll = Join-Path $Vst3 "Contents\x86_64-win\$productName.vst3"
 if (-not (Test-Path $dll)) { throw "plug-in DLL not found at $dll" }
 $work = Join-Path ([System.IO.Path]::GetTempPath()) "kinu-vst3-check"
 if (Test-Path $work) { Remove-Item -Recurse -Force $work }
@@ -150,7 +151,7 @@ if (-not $SkipCleanMachine) {
     Copy-Item -Recurse $Vst3 $stage
     Copy-Item $hostExe $stage
     Install-Models (Join-Path $stage "models")
-    $bundleDir = Join-Path $stage "Kinu Tune.vst3\Contents\x86_64-win"
+    $bundleDir = Join-Path $stage "$productName.vst3\Contents\x86_64-win"
 
     # Everything the plug-in and the DLLs shipped next to it import, so the
     # container can say which ones it does not have.
@@ -158,10 +159,10 @@ if (-not $SkipCleanMachine) {
     foreach ($shipped in Get-ChildItem $bundleDir -Filter *.dll) { $imports += Get-Imports $shipped.FullName }
     $imports | Sort-Object -Unique | Set-Content (Join-Path $stage "imports.txt")
 
-    @'
+    $containerScript = @'
 param([switch] $InstallRedist)
 $ErrorActionPreference = "Stop"
-$bundle = "C:\kinu\Kinu Tune.vst3\Contents\x86_64-win"
+$bundle = "C:\kinu\__PLUGIN_BUNDLE__.vst3\Contents\x86_64-win"
 Write-Host "Windows $([System.Environment]::OSVersion.Version)"
 if ($InstallRedist) {
     # What INSTALL.txt tells a user to do.
@@ -193,11 +194,13 @@ Copy-Item -Recurse C:\kinu\models $models
 # load any onnxruntime.dll, and must report the missing runtime.
 $hostArgs = @()
 if (-not $InstallRedist) { $hostArgs += "--expect-onnx-runtime-missing" }
-& C:\kinu\vst3_instantiate.exe @hostArgs "$bundle\Kinu Tune.vst3"
+& C:\kinu\vst3_instantiate.exe @hostArgs "$bundle\__PLUGIN_BUNDLE__.vst3"
 $code = $LASTEXITCODE
 if ($unexpected.Count -gt 0 -and $code -eq 0) { $code = 4 }
 exit $code
-'@ | Set-Content (Join-Path $stage "in-container.ps1")
+'@
+    $containerScript = $containerScript.Replace('__PLUGIN_BUNDLE__', $productName)
+    $containerScript | Set-Content (Join-Path $stage "in-container.ps1")
 
     Write-Host "::group::Pull $image"
     docker pull $image | Out-Host
