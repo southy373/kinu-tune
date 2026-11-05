@@ -20,7 +20,11 @@
 
 [Setup]
 ; Kinu Tune keeps its existing AppId; Pure Tune has a separate identity.
-AppId={{#ProductAppId}
+#if ProductName == "Pure Tune"
+AppId={#ProductAppId}
+#else
+AppId={{38373E75-C136-4F15-8F5D-6F966750C257}
+#endif
 AppName={#ProductName}
 AppVersion={#AppVersion}
 AppVerName={#ProductName} {#AppVersion}
@@ -64,7 +68,11 @@ Type: filesandordirs; Name: "{commoncf64}\VST3\{#ProductName}.vst3"
 Source: "{#StageDir}\{#ProductName}.vst3\*"; DestDir: "{commoncf64}\VST3\{#ProductName}.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; The current Pure Tune build reads the Kinu Tune model folder too. Preserve
 ; shared files when either product is uninstalled.
+#if ProductName == "Pure Tune"
 Source: "{#StageDir}\models\*"; DestDir: "{commonappdata}\Keinoaza\Kinu Tune\models"; Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall
+#else
+Source: "{#StageDir}\models\*"; DestDir: "{commonappdata}\Keinoaza\Kinu Tune\models"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 Source: "{#StageDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\THIRD_PARTY_NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\MODIFICATIONS.md"; DestDir: "{app}"; Flags: ignoreversion
