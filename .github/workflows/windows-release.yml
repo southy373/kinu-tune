@@ -2,8 +2,8 @@
 # attaches the zip to it, then the installer made from that zip (see
 # windows-installer.yml). Run it by hand (Actions > Windows release build >
 # Run workflow) after the release exists. fcpe.onnx, cent_table.bin,
-# mel_filterbank.bin and pc_nsf_hifigan.onnx are in the repository; CMake
-# downloads the GAME models from the OpenVPI release during configure.
+# and mel_filterbank.bin are in the repository; CMake needs no other model
+# download (the speech build has no GAME or vocoder model).
 name: Windows release build
 
 on:
@@ -57,10 +57,9 @@ jobs:
           $name = "Kinu-Tune-$version-Windows-x64"
           New-Item -ItemType Directory -Force -Path "$name/models", "$name/licenses" | Out-Null
           Copy-Item -Recurse "build/PitchNetPlugin_artefacts/Release/VST3/Kinu Tune.vst3" "$name/"
-          foreach ($f in "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin", "pc_nsf_hifigan.onnx") {
+          foreach ($f in "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin") {
             Copy-Item "Resources/models/$f" "$name/models/"
           }
-          Copy-Item -Recurse "Resources/models/GAME" "$name/models/"
           Copy-Item LICENSE, THIRD_PARTY_NOTICES.txt, MODIFICATIONS.md "$name/"
           Copy-Item licenses/* "$name/licenses/"
           Copy-Item packaging/INSTALL-Windows.txt "$name/INSTALL.txt"

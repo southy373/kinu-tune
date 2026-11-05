@@ -63,10 +63,9 @@ jobs:
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
 
-      # Loads fcpe.onnx, the GAME models and pc_nsf_hifigan.onnx with the
-      # Windows ONNX Runtime and checks the numbers: FCPE reports the tone's
-      # pitch, GAME finds the note, the vocoder and PSOLA shift it by a minor
-      # third. See tests/ModelInferenceTests.cpp.
+      # Loads fcpe.onnx with the Windows ONNX Runtime and checks the numbers:
+      # FCPE reports the tone's pitch, and PSOLA shifts it by a minor third.
+      # See tests/ModelInferenceTests.cpp.
       - name: Build the model inference test
         run: cmake --build build --config Release --target ModelInferenceTests --parallel
 
