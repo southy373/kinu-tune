@@ -589,7 +589,8 @@ void EditorController::resynthesizeIncrementalAsync(
       onComplete(false);
     return;
   }
-  if (!vocoder->isLoaded())
+  if (getSynthesisEngineType() == SynthesisEngineType::Vocoder &&
+      !vocoder->isLoaded())
   {
     if (onProgress)
       onProgress(TR("progress.loading_vocoder"));
@@ -1002,29 +1003,34 @@ void EditorController::analyzeAudio(
   if (shuttingDown.load())
     return;
 
-  onProgress(0.375, TR("progress.loading_vocoder"));
-  auto modelPath = PlatformPaths::getVocoderModelFile();
-
-  if (!modelPath.exists() && !vocoder->isLoaded())
+  // The neural vocoder is optional: it is loaded only when AI Resynthesis is
+  // the selected engine, which the speech build never selects.
+  if (getSynthesisEngineType() == SynthesisEngineType::Vocoder)
   {
-    showMissingModelAndAbort(TR("error.vocoder_model_name"), modelPath);
-    return;
-  }
+    onProgress(0.375, TR("progress.loading_vocoder"));
+    auto modelPath = PlatformPaths::getVocoderModelFile();
 
-  if (modelPath.exists() && !vocoder->isLoaded())
-  {
-    if (vocoder->loadModel(modelPath))
+    if (!modelPath.exists() && !vocoder->isLoaded())
     {
-    }
-    else
-    {
-      juce::MessageManager::callAsync([modelPath]()
-                                      { juce::AlertWindow::showMessageBoxAsync(
-                                            juce::AlertWindow::WarningIcon, TR("error.inference_failed"),
-                                            TR("error.vocoder_load_failed") + "\n" +
-                                                modelPath.getFullPathName() + "\n\n" +
-                                                TR("error.check_model_install")); });
+      showMissingModelAndAbort(TR("error.vocoder_model_name"), modelPath);
       return;
+    }
+
+    if (modelPath.exists() && !vocoder->isLoaded())
+    {
+      if (vocoder->loadModel(modelPath))
+      {
+      }
+      else
+      {
+        juce::MessageManager::callAsync([modelPath]()
+                                        { juce::AlertWindow::showMessageBoxAsync(
+                                              juce::AlertWindow::WarningIcon, TR("error.inference_failed"),
+                                              TR("error.vocoder_load_failed") + "\n" +
+                                                  modelPath.getFullPathName() + "\n\n" +
+                                                  TR("error.check_model_install")); });
+        return;
+      }
     }
   }
 
@@ -1122,6 +1128,247 @@ void EditorController::segmentIntoNotesAsync(
     }); });
 }
 
+namespace
+{
+// ---------------------------------------------------------------------------
+// Rule-based note segmentation for speech (replaces GAME in the speech build).
+//
+// A note is a voiced stretch of the F0 track, cut at energy dips (syllables),
+// with its head and tail extended into adjacent low-level frames (consonants,
+// breath) using a level threshold that is relative to the recording, not fixed.
+// Short words are kept: a note needs only a few voiced frames.
+// ---------------------------------------------------------------------------
+void segmentSpeechNotes(Project &targetProject,
+                        const std::function<void()> &onStreamingUpdate)
+{
+  auto &audioData = targetProject.getAudioData();
+  auto &notes = targetProject.getNotes();
+  const int f0Size = static_cast<int>(audioData.f0.size());
+  if (f0Size <= 0)
+    return;
+
+  audioData.segmentChunkRanges.emplace_back(0, f0Size);
+
+  constexpr int kBridgeGap = 3;        // F0 drop-outs up to ~35 ms stay in one run
+  constexpr int kMinVoicedFrames = 3;  // ~35 ms of voiced F0 is enough for a note
+  constexpr int kMinSegmentFrames = 6; // syllable cut keeps >= ~70 ms on each side
+  constexpr float kDipDb = 9.0f;       // energy dip needed for a syllable cut
+  constexpr int kPeakSearchFrames = 12;
+  constexpr int kMaxHeadFrames = 14;   // ~162 ms
+  constexpr int kMaxTailFrames = 10;   // ~116 ms
+
+  const auto &voicedMask = audioData.voicedMask;
+  auto voicedAt = [&](int i)
+  {
+    return i >= 0 && i < static_cast<int>(voicedMask.size()) &&
+           voicedMask[static_cast<size_t>(i)];
+  };
+
+  // Frame RMS (same frame grid as the F0 track).
+  std::vector<float> rms(static_cast<size_t>(f0Size), 0.0f);
+  if (audioData.waveform.getNumChannels() > 0)
+  {
+    const float *x = audioData.waveform.getReadPointer(0);
+    const int n = audioData.waveform.getNumSamples();
+    for (int i = 0; i < f0Size; ++i)
+    {
+      const int s = i * HOP_SIZE;
+      const int e = std::min(s + HOP_SIZE, n);
+      if (s >= n)
+        break;
+      double sum = 0.0;
+      for (int j = s; j < e; ++j)
+        sum += static_cast<double>(x[j]) * x[j];
+      rms[static_cast<size_t>(i)] = static_cast<float>(std::sqrt(sum / (e - s)));
+    }
+  }
+
+  // Level thresholds relative to the recording.
+  float thr = 1.0e-4f;
+  {
+    std::vector<float> sorted(rms);
+    std::sort(sorted.begin(), sorted.end());
+    const float noise = sorted[sorted.size() / 10];
+    const float peak = sorted[std::min(sorted.size() - 1, sorted.size() * 95 / 100)];
+    thr = std::max({noise * 3.0f, peak * 0.01f, 5.0e-5f});
+  }
+
+  std::vector<float> db(static_cast<size_t>(f0Size), -120.0f);
+  for (int i = 0; i < f0Size; ++i)
+  {
+    float acc = 0.0f;
+    int cnt = 0;
+    for (int k = -1; k <= 1; ++k)
+    {
+      const int j = i + k;
+      if (j >= 0 && j < f0Size)
+      {
+        acc += rms[static_cast<size_t>(j)];
+        ++cnt;
+      }
+    }
+    db[static_cast<size_t>(i)] =
+        20.0f * std::log10(std::max(acc / static_cast<float>(cnt), 1.0e-7f));
+  }
+
+  // 1. Voiced runs, bridging short F0 drop-outs.
+  struct Run
+  {
+    int start;
+    int end;
+  };
+  std::vector<Run> runs;
+  {
+    int i = 0;
+    while (i < f0Size)
+    {
+      if (!voicedAt(i))
+      {
+        ++i;
+        continue;
+      }
+      int s = i;
+      int e = i + 1;
+      int j = e;
+      while (j < f0Size)
+      {
+        if (voicedAt(j))
+        {
+          e = j + 1;
+          ++j;
+          continue;
+        }
+        int k = j;
+        while (k < f0Size && !voicedAt(k))
+          ++k;
+        if (k < f0Size && k - j <= kBridgeGap)
+        {
+          j = k;
+          continue;
+        }
+        break;
+      }
+      runs.push_back({s, e});
+      i = std::max(e, j);
+    }
+  }
+
+  // 2. Cut each run at energy dips (syllable boundaries).
+  std::vector<Run> segments;
+  for (const auto &run : runs)
+  {
+    int voicedCount = 0;
+    for (int i = run.start; i < run.end; ++i)
+      if (voicedAt(i))
+        ++voicedCount;
+    if (voicedCount < kMinVoicedFrames)
+      continue;
+
+    int segStart = run.start;
+    for (int i = run.start + kMinSegmentFrames; i < run.end - kMinSegmentFrames; ++i)
+    {
+      if (i - segStart < kMinSegmentFrames)
+        continue;
+      const float here = db[static_cast<size_t>(i)];
+
+      bool isMin = true;
+      for (int k = std::max(run.start, i - 3); k <= std::min(run.end - 1, i + 3); ++k)
+        if (db[static_cast<size_t>(k)] < here)
+        {
+          isMin = false;
+          break;
+        }
+      if (!isMin)
+        continue;
+
+      float leftPeak = here;
+      for (int k = std::max(run.start, i - kPeakSearchFrames); k <= i; ++k)
+        leftPeak = std::max(leftPeak, db[static_cast<size_t>(k)]);
+      float rightPeak = here;
+      for (int k = i; k <= std::min(run.end - 1, i + kPeakSearchFrames); ++k)
+        rightPeak = std::max(rightPeak, db[static_cast<size_t>(k)]);
+
+      if (std::min(leftPeak, rightPeak) - here >= kDipDb)
+      {
+        segments.push_back({segStart, i});
+        segStart = i;
+      }
+    }
+    segments.push_back({segStart, run.end});
+  }
+
+  // 3. One note per segment; pitch = median of its voiced frames.
+  for (const auto &seg : segments)
+  {
+    std::vector<float> midis;
+    for (int i = seg.start; i < seg.end; ++i)
+    {
+      if (voicedAt(i) && i < static_cast<int>(audioData.rawF0.size()) &&
+          audioData.rawF0[static_cast<size_t>(i)] > 0.0f)
+        midis.push_back(freqToMidi(audioData.rawF0[static_cast<size_t>(i)]));
+    }
+    if (midis.empty())
+      continue;
+    std::nth_element(midis.begin(), midis.begin() + midis.size() / 2, midis.end());
+    const float midi = midis[midis.size() / 2];
+
+    const int s = std::max(0, std::min(seg.start, f0Size - 1));
+    const int e = std::max(s + 1, std::min(seg.end, f0Size));
+    Note note(s, e, midi);
+    note.setF0Values(std::vector<float>(audioData.f0.begin() + s,
+                                        audioData.f0.begin() + e));
+    notes.push_back(note);
+  }
+
+  if (onStreamingUpdate)
+    juce::MessageManager::callAsync(onStreamingUpdate);
+
+  // 4. Extend heads and tails into consonants / breath above the relative level.
+  for (size_t ni = 0; ni < notes.size(); ++ni)
+  {
+    auto &note = notes[ni];
+    const int start = note.getStartFrame();
+    const int end = note.getEndFrame();
+    const int prevEnd = ni > 0 ? notes[ni - 1].getEndFrame() : 0;
+    const int nextStart = ni + 1 < notes.size() ? notes[ni + 1].getStartFrame() : f0Size;
+
+    int newStart = start;
+    for (int i = start - 1; i >= std::max(prevEnd, start - kMaxHeadFrames); --i)
+    {
+      if (rms[static_cast<size_t>(i)] > thr)
+        newStart = i;
+      else
+        break;
+    }
+    int newEnd = end;
+    for (int i = end; i < std::min(nextStart, end + kMaxTailFrames); ++i)
+    {
+      if (rms[static_cast<size_t>(i)] > thr)
+        newEnd = i + 1;
+      else
+        break;
+    }
+
+    newStart = std::max(prevEnd, newStart);
+    newEnd = std::max(newStart + 1, std::min(nextStart, newEnd));
+    newStart = std::max(0, std::min(newStart, f0Size - 1));
+    newEnd = std::max(newStart + 1, std::min(newEnd, f0Size));
+
+    note.setStartFrame(newStart);
+    note.setEndFrame(newEnd);
+    note.setSrcStartFrame(newStart);
+    note.setSrcEndFrame(newEnd);
+    note.setF0Values(std::vector<float>(audioData.f0.begin() + newStart,
+                                        audioData.f0.begin() + newEnd));
+  }
+
+  for (auto &note : notes)
+    NoteAmplitude::update(note, audioData);
+
+  PitchCurveProcessor::rebuildCurvesFromSource(targetProject, audioData.f0);
+}
+} // namespace
+
 void EditorController::segmentIntoNotes(Project &targetProject,
                                         std::function<void()> onStreamingUpdate,
                                         std::function<void(double)> onProgress)
@@ -1134,6 +1381,14 @@ void EditorController::segmentIntoNotes(Project &targetProject,
 
   if (audioData.f0.empty())
     return;
+
+  // Speech build: GAME is not loaded, so notes come from the F0 track and the
+  // signal level (see segmentSpeechNotes above).
+  if (!gameDetector || !gameDetector->isLoaded())
+  {
+    segmentSpeechNotes(targetProject, onStreamingUpdate);
+    return;
+  }
 
   if (!gameDetector || !gameDetector->isLoaded())
   {

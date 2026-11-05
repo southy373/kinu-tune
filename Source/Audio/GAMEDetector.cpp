@@ -223,6 +223,14 @@ GAMEDetector::createSessionOptions(GPUProvider provider, int deviceId)
 bool GAMEDetector::loadModels(const juce::File &gameDir, GPUProvider provider,
                               int deviceId)
 {
+#ifndef KINU_ENABLE_GAME
+    // Kinu Tune (speech build): the GAME model weights are CC BY-NC-SA 4.0 and
+    // are neither shipped nor loaded. Notes come from segmentSpeechNotes().
+    (void)gameDir;
+    (void)provider;
+    (void)deviceId;
+    return false;
+#endif
 #ifdef HAVE_ONNXRUNTIME
     // Any Ort:: call without a loaded runtime dereferences a null API.
     if (!OnnxRuntime::isAvailable())

@@ -132,6 +132,24 @@ const WindowsGpuCapabilities &getWindowsGpuCapabilities()
 #endif
 } // namespace
 
+#ifndef KINU_ENABLE_AI_RESYNTHESIS
+// Kinu Tune (speech build): the neural vocoder (PC-NSF-HiFiGAN, CC BY-NC-SA 4.0)
+// is not shipped or loaded. Classic PSOLA is the only engine.
+SynthesisEngineType defaultSynthesisEngineType()
+{
+  return SynthesisEngineType::Psola;
+}
+
+SynthesisEngineType synthesisEngineTypeForSavedPreference(SynthesisEngineType)
+{
+  return SynthesisEngineType::Psola;
+}
+
+AiResynthesisSupport getAiResynthesisSupport()
+{
+  return AiResynthesisSupport::Unavailable;
+}
+#else
 SynthesisEngineType defaultSynthesisEngineType()
 {
 #if JUCE_LINUX
@@ -181,3 +199,4 @@ AiResynthesisSupport getAiResynthesisSupport()
   return AiResynthesisSupport::Unavailable;
 #endif
 }
+#endif // KINU_ENABLE_AI_RESYNTHESIS
