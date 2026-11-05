@@ -165,10 +165,8 @@ VariAudio にあって Kinu Tune に無いもの: Option + 矩形ドラッグで
 | モデル | 用途 | ライセンス |
 |---|---|---|
 | FCPE | ピッチ検出(既定) | MIT |
-| GAME | ノート分割 | 学習済みモデルは CC BY-NC-SA 4.0(ソースは MIT) |
-| PC-NSF-HiFiGAN | 再合成(ボコーダー) | 学習済みモデルは CC BY-NC-SA 4.0([OpenVPI の通知](licenses/PC-NSF-HiFiGAN-NOTICE.txt)) |
 
-- GAME と PC-NSF-HiFiGAN のモデルは CC BY-NC-SA 4.0(非営利・継承)です。ライセンスの「非営利」は "not primarily intended for or directed towards commercial advantage or monetary compensation"(主として商業上の利益や金銭的な対価を目的としないこと)と定義されています。Kinu Tune の配布版は無料です。どんな使い方が許されるかは、[ライセンスの本文](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.ja)を確認してください
+- このセリフ向けビルドには、非営利ライセンス(CC BY-NC-SA 4.0)の GAME モデルと PC-NSF-HiFiGAN モデルは含まれません。ノート分割は音量と F0 から決める規則ベースの処理、再合成はクラシック(PSOLA)のみです
 - モデルは配布版 zip の `models` フォルダーに入っています。各ライセンスの全文と通知は zip とリポジトリの `licenses` フォルダー、[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) にあります
 - RMVPE(設定で選べるもう1つのピッチ検出)は、配布元がライセンスを示していないため、配布版には入れていません。自分で入手する権利がある場合は、`rmvpe.onnx` を `models` フォルダーに置くと使えます(Mac は `~/Library/Application Support/Keinoaza/Kinu Tune/models`。Windows はインストーラーで入れた場合 `%PROGRAMDATA%\Keinoaza\Kinu Tune\models`、zip から入れた場合 `%APPDATA%\Keinoaza\Kinu Tune\models`)
 
@@ -181,7 +179,7 @@ VariAudio にあって Kinu Tune に無いもの: Option + 矩形ドラッグで
 
 ### 自分でビルドする
 
-下の [Build](#build) を見てください。`fcpe.onnx`・`cent_table.bin`・`mel_filterbank.bin`・`pc_nsf_hifigan.onnx` はリポジトリの `Resources/models` に入っています。macOS 用の `pc_nsf_hifigan.mlmodelc` はリポジトリに無いので、配布版 zip の `models` フォルダーから `Resources/models` に置いてください。GAME のモデルは構成時に自動でダウンロードされます。
+下の [Build](#build) を見てください。ビルドに必要なモデルは `fcpe.onnx`・`cent_table.bin`・`mel_filterbank.bin` だけで、リポジトリの `Resources/models` に入っています。
 
 ---
 
@@ -319,10 +317,8 @@ Not in Kinu Tune although VariAudio has them: Option + rubber-band zoom and Opti
 | Model | Purpose | License |
 |---|---|---|
 | FCPE | Pitch detection (default) | MIT |
-| GAME | Note segmentation | Model weights: CC BY-NC-SA 4.0 (source: MIT) |
-| PC-NSF-HiFiGAN | Resynthesis (vocoder) | Model weights: CC BY-NC-SA 4.0 ([OpenVPI notice](licenses/PC-NSF-HiFiGAN-NOTICE.txt)) |
 
-The GAME and PC-NSF-HiFiGAN weights are licensed under CC BY-NC-SA 4.0 (NonCommercial, ShareAlike). The license defines NonCommercial as "not primarily intended for or directed towards commercial advantage or monetary compensation". Kinu Tune releases are free of charge; read [the license](https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en) for what it allows. The models are in the `models` folder of the release zip; full notices and license texts are in the `licenses` folder and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt). RMVPE (the optional second pitch detector) is not included because its repository declares no license; if you have the right to use it, put `rmvpe.onnx` in the `models` folder (macOS: `~/Library/Application Support/Keinoaza/Kinu Tune/models`; Windows: `%PROGRAMDATA%\Keinoaza\Kinu Tune\models` after the installer, `%APPDATA%\Keinoaza\Kinu Tune\models` after a manual install).
+This speech build does not include the GAME and PC-NSF-HiFiGAN model weights (CC BY-NC-SA 4.0). Note segmentation is rule-based (signal level and the F0 track) and resynthesis uses only the Classic (PSOLA) engine. RMVPE (the optional second pitch detector) is not included because its repository declares no license; if you have the right to use it, put `rmvpe.onnx` in the `models` folder (macOS: `~/Library/Application Support/Keinoaza/Kinu Tune/models`; Windows: `%PROGRAMDATA%\Keinoaza\Kinu Tune\models` after the installer, `%APPDATA%\Keinoaza\Kinu Tune\models` after a manual install).
 
 ### Network and telemetry
 
@@ -343,7 +339,7 @@ cmake --build build --config Release
 
 On macOS the default is a universal (arm64 + x86_64) build; the released binary is built with `-DCMAKE_OSX_ARCHITECTURES=arm64`.
 
-The build expects these files in `Resources/models`: `fcpe.onnx`, `cent_table.bin`, `mel_filterbank.bin` and `pc_nsf_hifigan.onnx` are in this repository; `pc_nsf_hifigan.mlmodelc` (required on macOS) is not, so take it from the `models` folder of a release zip. The GAME models are downloaded into `Resources/models/GAME` during configure if missing. `rmvpe.onnx` is optional.
+The build expects these files in `Resources/models`: `fcpe.onnx`, `cent_table.bin` and `mel_filterbank.bin` (all in this repository). `rmvpe.onnx` is optional.
 
 Options added or used by Kinu Tune:
 
@@ -357,7 +353,7 @@ Other options from PitchNet:
 - `-DUSE_BUNDLED_CUDA_RUNTIME=ON`, `-DUSE_BUNDLED_DIRECTML_RUNTIME=ON` (Windows)
 - ONNX Runtime 1.19.2 is downloaded during configure
 
-VST3 and AU are built by default; AAX only when `AAX_SDK_PATH` is set. The Windows release is built by `.github/workflows/windows-release.yml` (run it by hand for a release tag; it uses the model files in this repository and the GAME models that CMake downloads). ARA is enabled when the `third_party/ARA_SDK` submodule is present. Kinu Tune has been tested on macOS (Apple silicon) with Cubase only.
+VST3 and AU are built by default; AAX only when `AAX_SDK_PATH` is set. The Windows release is built by `.github/workflows/windows-release.yml` (run it by hand for a release tag; it uses the model files in this repository). ARA is enabled when the `third_party/ARA_SDK` submodule is present. Kinu Tune has been tested on macOS (Apple silicon) with Cubase only.
 
 ### Project structure
 

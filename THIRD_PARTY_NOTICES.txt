@@ -28,14 +28,12 @@ trademarks of Steinberg Media Technologies GmbH. VST is a registered trademark
 of Steinberg Media Technologies GmbH. Melodyne and ARA are trademarks of
 Celemony Software GmbH. Logic Pro and Audio Units are trademarks of Apple Inc.
 
-Kinu Tune binary releases include the FCPE, GAME and PC-NSF-HiFiGAN model
-files described below. They do NOT include rmvpe.onnx (see "RMVPE model
-assets"). The GAME and PC-NSF-HiFiGAN model files are licensed under CC
-BY-NC-SA 4.0, whose NonCommercial term reads: "NonCommercial means not
-primarily intended for or directed towards commercial advantage or monetary
-compensation." Kinu Tune binary releases are distributed free of charge. Read
-the license (https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en)
-for what it allows.
+Kinu Tune speech-build binary releases include the FCPE model and its tables
+only. They do NOT include rmvpe.onnx (see "RMVPE model assets"), and they do
+NOT include the GAME or PC-NSF-HiFiGAN model files, which are licensed under CC
+BY-NC-SA 4.0 (NonCommercial). The notices for those two models below are kept
+for the source tree and for builds that define KINU_ENABLE_GAME or
+KINU_ENABLE_AI_RESYNTHESIS and supply the models themselves.
 
 License texts referenced below are in the licenses/ folder of the source
 repository and of every binary release.

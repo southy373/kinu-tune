@@ -955,86 +955,13 @@ target_compile_definitions(PitchNetPlugin PRIVATE
 
 # Check required models
 set(MODELS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Resources/models")
+# Speech build: only the MIT-licensed FCPE pitch model and its tables are
+# required. The GAME and PC-NSF-HiFiGAN models (CC BY-NC-SA 4.0) are not used.
 set(REQUIRED_MODELS
     fcpe.onnx
     cent_table.bin
     mel_filterbank.bin
 )
-if(APPLE)
-    list(APPEND REQUIRED_MODELS pc_nsf_hifigan.mlmodelc)
-else()
-    list(APPEND REQUIRED_MODELS pc_nsf_hifigan.onnx)
-endif()
-
-# Check required GAME models
-set(GAME_DIR "${MODELS_DIR}/GAME")
-set(REQUIRED_GAME_MODELS
-    encoder.onnx
-    segmenter.onnx
-    estimator.onnx
-    bd2dur.onnx
-    dur2bd.onnx
-    config.json
-)
-
-# Auto-download GAME models if missing
-set(GAME_MODELS_MISSING FALSE)
-foreach(GMODEL ${REQUIRED_GAME_MODELS})
-    if(NOT EXISTS "${GAME_DIR}/${GMODEL}")
-        set(GAME_MODELS_MISSING TRUE)
-        break()
-    endif()
-endforeach()
-
-if(GAME_MODELS_MISSING)
-    message(STATUS "GAME models not found, downloading...")
-    if(NOT GAME_MODELS_URL)
-        string(REGEX REPLACE "^v" "" GAME_MODELS_VERSION_NAME "${GAME_MODELS_VERSION}")
-        set(GAME_MODELS_URL "https://github.com/openvpi/GAME/releases/download/${GAME_MODELS_VERSION}/GAME-${GAME_MODELS_VERSION_NAME}-small-onnx.zip")
-        pitchnet_download_hash_arguments(GAME_HASH_ARGS "game-models-${GAME_MODELS_VERSION}-small-onnx" EXPECTED_HASH)
-    elseif(GAME_MODELS_SHA256)
-        set(GAME_HASH_ARGS EXPECTED_HASH "SHA256=${GAME_MODELS_SHA256}")
-    elseif(PITCHNET_ALLOW_UNPINNED_DOWNLOADS)
-        message(WARNING "GAME_MODELS_URL is set without GAME_MODELS_SHA256; downloading it unverified because PITCHNET_ALLOW_UNPINNED_DOWNLOADS is ON")
-        set(GAME_HASH_ARGS "")
-    else()
-        message(FATAL_ERROR "GAME_MODELS_URL is set but GAME_MODELS_SHA256 is not. Pass the SHA-256 of that zip, or -DPITCHNET_ALLOW_UNPINNED_DOWNLOADS=ON to download it unverified.")
-    endif()
-    set(GAME_ZIP_URL "${GAME_MODELS_URL}")
-    set(GAME_ZIP_PATH "${CMAKE_BINARY_DIR}/GAME-1.0-small-onnx.zip")
-    set(GAME_EXTRACT_DIR "${CMAKE_BINARY_DIR}/_game_extract")
-
-    file(DOWNLOAD "${GAME_ZIP_URL}" "${GAME_ZIP_PATH}"
-         ${GAME_HASH_ARGS}
-         STATUS GAME_DL_STATUS
-         SHOW_PROGRESS)
-    list(GET GAME_DL_STATUS 0 GAME_DL_CODE)
-    if(NOT GAME_DL_CODE EQUAL 0)
-        message(FATAL_ERROR "Failed to download GAME models: ${GAME_DL_STATUS}")
-    endif()
-
-    file(MAKE_DIRECTORY "${GAME_EXTRACT_DIR}")
-    execute_process(
-        COMMAND ${CMAKE_COMMAND} -E tar xf "${GAME_ZIP_PATH}"
-        WORKING_DIRECTORY "${GAME_EXTRACT_DIR}"
-        RESULT_VARIABLE GAME_EXTRACT_RESULT)
-    if(NOT GAME_EXTRACT_RESULT EQUAL 0)
-        message(FATAL_ERROR "Failed to extract GAME models")
-    endif()
-
-    # Find and copy extracted files into Resources/models/GAME
-    file(MAKE_DIRECTORY "${GAME_DIR}")
-    file(GLOB_RECURSE GAME_EXTRACTED_FILES "${GAME_EXTRACT_DIR}/*.onnx" "${GAME_EXTRACT_DIR}/config.json")
-    foreach(GFILE ${GAME_EXTRACTED_FILES})
-        get_filename_component(GNAME "${GFILE}" NAME)
-        file(COPY "${GFILE}" DESTINATION "${GAME_DIR}")
-    endforeach()
-
-    # Clean up
-    file(REMOVE "${GAME_ZIP_PATH}")
-    file(REMOVE_RECURSE "${GAME_EXTRACT_DIR}")
-    message(STATUS "GAME models downloaded and extracted to ${GAME_DIR}")
-endif()
 
 # Check required models
 if(PITCHNET_REQUIRE_MODELS)
@@ -1047,11 +974,6 @@ foreach(MODEL ${REQUIRED_MODELS})
     if(NOT EXISTS "${MODELS_DIR}/${MODEL}")
         message(${PITCHNET_MISSING_MODEL_LEVEL} "Required model not found: ${MODELS_DIR}/${MODEL}")
         set(PITCHNET_MODELS_MISSING TRUE)
-    endif()
-endforeach()
-foreach(GMODEL ${REQUIRED_GAME_MODELS})
-    if(NOT EXISTS "${GAME_DIR}/${GMODEL}")
-        message(FATAL_ERROR "Required GAME model not found: ${GAME_DIR}/${GMODEL}")
     endif()
 endforeach()
 if(NOT PITCHNET_MODELS_MISSING)

@@ -129,6 +129,24 @@ The full history of the changes is in the git log of this repository.
   Runtime not loaded), an AI choice is moved to Classic and saved instead of
   staying selected but disabled. GpuDeviceList::hasGpuInference is removed.
 
+### Speech build (CM / MA use, no non-commercial models)
+- The GAME note-segmentation model and the PC-NSF-HiFiGAN vocoder (both
+  CC BY-NC-SA 4.0 weights) are no longer shipped, downloaded or loaded.
+  `GAMEDetector::loadModels` returns false unless `KINU_ENABLE_GAME` is defined;
+  `defaultSynthesisEngineType`, `synthesisEngineTypeForSavedPreference` and
+  `getAiResynthesisSupport` return PSOLA / PSOLA / Unavailable unless
+  `KINU_ENABLE_AI_RESYNTHESIS` is defined. The analysis no longer needs the
+  vocoder model, and the vocoder is loaded only when it is the selected engine.
+- New rule-based note segmentation for speech (`segmentSpeechNotes` in
+  `Source/Audio/EditorController.cpp`): notes are the voiced stretches of the
+  F0 track, with F0 drop-outs of up to 3 frames bridged, cut at energy dips of
+  9 dB or more (syllables), and with heads and tails extended into consonants
+  and breath using a level threshold relative to the recording. A note needs
+  only 3 voiced frames, so short words are kept.
+- CMake no longer downloads GAME or requires the vocoder model;
+  ModelInferenceTests checks FCPE and PSOLA only; the "not available" tooltip
+  of AI Resynthesis says the build does not include it.
+
 ### Defaults
 - Pitch Snap Mode Absolute, smart controls "Show All", scale shown in the piano
   roll, for new projects. Saved projects keep their saved settings.
