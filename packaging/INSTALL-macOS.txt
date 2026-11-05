@@ -31,5 +31,5 @@ Kinu Tune - macOS (Apple silicon) インストール / Install
    If you did not install the Audio Unit, the "No such file" message for the Components path is harmless.
 
 ライセンス / Licenses: LICENSE (GNU AGPL v3), THIRD_PARTY_NOTICES.txt, licenses/
-The GAME and PC-NSF-HiFiGAN model files are licensed under CC BY-NC-SA 4.0 (OpenVPI).
+This speech build does not include the GAME and PC-NSF-HiFiGAN models (CC BY-NC-SA 4.0).
 Source code: https://github.com/keinoaza666-stack/kinu-tune

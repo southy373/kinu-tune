@@ -27,5 +27,5 @@ If the plug-in crashes when inserted or never starts analysing, install the late
 If Windows blocks the downloaded files, open the zip's Properties, tick "Unblock", then extract again.
 
 ライセンス / Licenses: LICENSE (GNU AGPL v3), THIRD_PARTY_NOTICES.txt, licenses\
-The GAME and PC-NSF-HiFiGAN model files are licensed under CC BY-NC-SA 4.0 (OpenVPI).
+This speech build does not include the GAME and PC-NSF-HiFiGAN models (CC BY-NC-SA 4.0).
 Source code: https://github.com/keinoaza666-stack/kinu-tune
