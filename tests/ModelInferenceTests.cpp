@@ -2,33 +2,22 @@
 // Part of Kinu Tune, a modified version of PitchNet. Licensed under the GNU
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 
-// Loads the models Kinu Tune ships and checks, with numbers, that analysis and
-// synthesis work on the platform this runs on. The other tests load no model,
-// so until this one existed nothing had ever run a model on Windows except a
-// user's DAW. The CI Windows job builds and runs only this test.
+// Loads the model Kinu Tune ships (FCPE) and checks, with numbers, that pitch
+// detection and the Classic (PSOLA) engine work on the platform this runs on.
+// The GAME and PC-NSF-HiFiGAN models (CC BY-NC-SA 4.0) are not part of the
+// speech build, so they are no longer tested here.
 //
 // A two-second harmonic tone at 220 Hz (A3, MIDI 57) goes through:
 //   1. FCPE          the pitch detector must report 220 Hz
-//   2. GAME          note segmentation must find a note at MIDI 57
-//   3. the vocoder   AI resynthesis of the tone's mel spectrogram with an F0
-//                    a minor third higher must sound at 261.6 Hz (measured
-//                    with FCPE), both through infer() and inferWithPitchShift()
-//   4. PSOLA         the Classic engine shifting the tone by the same interval
-//                    must also sound at 261.6 Hz
-//   5. the panel     AI Resynthesis must be selectable on this platform
-//                    (getAiResynthesisSupport is not Unavailable)
+//   2. PSOLA         the Classic engine shifting the tone by a minor third must
+//                    sound at 261.6 Hz (measured with FCPE)
 //
-// argv[1] is the models folder (Resources/models). On macOS the vocoder uses
-// the Core ML model when it sits next to pc_nsf_hifigan.onnx and the ONNX
-// model otherwise, so the test covers whichever backend the folder provides.
+// argv[1] is the models folder (Resources/models).
 
 #include "../Source/Audio/FCPEPitchDetector.h"
-#include "../Source/Audio/GAMEDetector.h"
 #include "../Source/Audio/Synthesis/PsolaSynthesizer.h"
 #include "../Source/Audio/SynthesisEngineType.h"
-#include "../Source/Audio/Vocoder.h"
 #include "../Source/Utils/Constants.h"
-#include "../Source/Utils/MelSpectrogram.h"
 #include "../Source/Utils/OnnxRuntime.h"
 #include "TestAssert.h"
 
@@ -41,7 +30,6 @@ namespace
 {
 constexpr int kSampleRate = 44100;
 constexpr double kSourceHz = 220.0; // A3
-constexpr double kSourceMidi = 57.0;
 constexpr double kSeconds = 2.0;
 constexpr double kShiftSemitones = 3.0; // a minor third, as the harmony buttons use
 constexpr double kTolerancePercent = 3.0; // about half a semitone
@@ -146,50 +134,8 @@ int main(int argc, char **argv)
     CHECK(voicedCount(f0) * 2 > f0.size());
     CHECK(withinPercent(detectedHz, kSourceHz, kTolerancePercent));
 
-    // 2. GAME segments the tone into a note at MIDI 57.
-    GAMEDetector game;
-    CHECK(game.loadModels(models.getChildFile("GAME")));
-    const auto notes = game.detectNotes(tone.data(), static_cast<int>(tone.size()), kSampleRate);
-    for (const auto &note : notes)
-        std::printf("GAME event: frames %d-%d MIDI %.2f%s\n", note.startFrame, note.endFrame,
-                    note.midiNote, note.isRest ? " (rest)" : "");
-    const GAMEDetector::NoteEvent *longest = nullptr;
-    for (const auto &note : notes)
-        if (!note.isRest && (longest == nullptr ||
-                             note.endFrame - note.startFrame > longest->endFrame - longest->startFrame))
-            longest = &note;
-    std::printf("GAME: %zu events, longest note MIDI %.2f over frames %d-%d (expected %.0f)\n",
-                notes.size(), longest ? longest->midiNote : 0.0f,
-                longest ? longest->startFrame : 0, longest ? longest->endFrame : 0, kSourceMidi);
-    CHECK(longest != nullptr);
-    CHECK(std::abs(longest->midiNote - kSourceMidi) <= 1.0);
-
-    // 3. The vocoder resynthesises the tone at the F0 it is given.
-    Vocoder vocoder;
-    CHECK(vocoder.loadModel(models.getChildFile("pc_nsf_hifigan.onnx")));
-    MelSpectrogram melComputer(kSampleRate, N_FFT, HOP_SIZE, NUM_MELS, FMIN, FMAX);
-    const auto mel = melComputer.compute(tone.data(), static_cast<int>(tone.size()));
-    CHECK(!mel.empty());
+    // 2. PSOLA (the Classic engine) shifts the tone by a minor third.
     const double targetHz = shifted(kSourceHz);
-
-    const std::vector<float> f0Target(mel.size(), static_cast<float>(targetHz));
-    const auto resynth = vocoder.infer(mel, f0Target);
-    const float resynthHz = measureHz(fcpe, resynth, vocoder.getSampleRate());
-    std::printf("Vocoder infer: %zu samples from %zu frames, peak %.3f, %.1f Hz (expected %.1f)\n",
-                resynth.size(), mel.size(), peak(resynth), resynthHz, targetHz);
-    CHECK(!resynth.empty());
-    CHECK(peak(resynth) > 0.01f);
-    CHECK(withinPercent(resynthHz, targetHz, kTolerancePercent));
-
-    const std::vector<float> f0Source(mel.size(), static_cast<float>(kSourceHz));
-    const auto pitchShifted = vocoder.inferWithPitchShift(mel, f0Source, static_cast<float>(kShiftSemitones));
-    const float pitchShiftedHz = measureHz(fcpe, pitchShifted, vocoder.getSampleRate());
-    std::printf("Vocoder inferWithPitchShift(+%.0f): %zu samples, %.1f Hz (expected %.1f)\n",
-                kShiftSemitones, pitchShifted.size(), pitchShiftedHz, targetHz);
-    CHECK(!pitchShifted.empty());
-    CHECK(withinPercent(pitchShiftedHz, targetHz, kTolerancePercent));
-
-    // 4. PSOLA (the Classic engine) shifts the tone by the same interval.
     DspSynthesisRequest request;
     request.source = tone;
     request.sourceStartSample = 0;
@@ -212,20 +158,6 @@ int main(int argc, char **argv)
     CHECK(peak(psola) > 0.01f);
     CHECK(withinPercent(psolaHz, targetHz, kTolerancePercent));
 
-    // 5. The vocoder that just ran can also be chosen on the right panel. The
-    //    Windows release is CPU-only, and its AI option used to be disabled
-    //    while still the default, so Classic, once picked, could not be undone.
-    const auto support = getAiResynthesisSupport();
-    std::printf("AI Resynthesis support: %s\n",
-                support == AiResynthesisSupport::Accelerated ? "accelerated"
-                : support == AiResynthesisSupport::CpuOnly   ? "CPU only"
-                                                             : "unavailable");
-#if JUCE_MAC
-    CHECK(support == AiResynthesisSupport::Accelerated);
-#elif JUCE_WINDOWS
-    CHECK(support != AiResynthesisSupport::Unavailable);
-#endif
-
-    std::printf("ModelInferenceTests: analysis and synthesis work on this platform\n");
+    std::printf("ModelInferenceTests: pitch detection and PSOLA work on this platform\n");
     return 0;
 }

@@ -115,7 +115,7 @@ add_test(NAME OnnxRuntimeAvailabilityTests COMMAND OnnxRuntimeAvailabilityTests)
 # Loads the shipped models and checks analysis and synthesis with numbers. The
 # CI Windows job builds and runs only this target (the other tests stay on
 # macOS), because nothing else runs a model on Windows. The test takes the
-# models folder as its argument; GAME is downloaded into it at configure time.
+# models folder as its argument.
 add_executable(ModelInferenceTests ModelInferenceTests.cpp)
 target_link_libraries(ModelInferenceTests PRIVATE pitchnet_core)
 target_compile_features(ModelInferenceTests PRIVATE cxx_std_17)
