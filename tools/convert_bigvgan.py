@@ -32,6 +32,13 @@ import subprocess
 import sys
 import tempfile
 
+# Windows CI consoles use a legacy code page (cp1252) that cannot encode
+# some characters printed by torch/onnx export logging (e.g. check marks);
+# make this process's output encoding-proof before doing anything else.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 HF_REPO = "nvidia/bigvgan_v2_44khz_128band_512x"
 HF_REVISION = "95a9d1dcb12906c03edd938d77b9333d6ded7dfb"
 GENERATOR_SHA256 = (
