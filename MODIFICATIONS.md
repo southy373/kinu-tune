@@ -165,14 +165,15 @@ The full history of the changes is in the git log of this repository.
 - AI Resynthesis returns through BigVGAN v2 (44kHz / 128 band; code and
   weights MIT), gated on the model file instead of a build flag: when
   `bigvgan_v2_44khz_128band.onnx` is present in the models folder,
-  `getAiResynthesisSupport` reports CPU-only support, a saved AI choice is
+  `getAiResynthesisSupport` reports support, a saved AI choice is
   kept, and the engine can be selected; the default stays PSOLA and the NSF
   vocoder code is untouched. The model (~490 MB) is never committed:
   `tools/convert_bigvgan.py` generates it from the official checkpoint
   (Dynamo exporter, weights inlined into a single file) and the Windows CI
   and release workflows run it before configuring; the release zip ships it
   in its models folder. New code: `Source/Audio/BigVGANVocoder.{h,cpp}`
-  (CPU ONNX wrapper; chunked inference with trimmed context frames),
+  (ONNX wrapper, DirectML with CPU fallback; chunked inference with
+  trimmed context frames),
   `Source/Utils/BigVGANMel.{h,cpp}` (BigVGAN's mel: the existing Slaney
   filterbank at fmin 0 / fmax 22050 with a 1e-5 log floor - a new
   `MelSpectrogram` constructor parameter - plus BigVGAN's uncentred
@@ -183,6 +184,22 @@ The full history of the changes is in the git log of this repository.
   `BigVGANVocoder` and loads the model in preference to the NSF vocoder
   when AI Resynthesis is selected; the unavailable tooltip now names the
   BigVGAN file to place.
+- BigVGAN speed work (it rendered far slower than the NSF vocoder): in
+  DirectML builds `BigVGANVocoder` appends the DirectML execution
+  provider exactly like the NSF vocoder (memory pattern off, sequential
+  execution, single ORT thread), retries session creation with CPU
+  options when that fails, logs the provider it ended up on, and exposes
+  it through `isUsingGpu()` / `activeProviderName()`.
+  `getAiResynthesisSupport` reports Accelerated in that case (DirectML
+  provider present plus a hardware adapter) and CPU-only otherwise. On
+  the CPU the intra-op thread budget is about 70% of the logical cores
+  rather than half, leaving the host DAW headroom, and inference chunks
+  grow from 200 to 512 frames so the trimmed 32-frame context costs
+  proportionally less. The Windows CI and release workflows now
+  configure with `-DUSE_DIRECTML=ON -DUSE_BUNDLED_DIRECTML_RUNTIME=ON`
+  (they previously forced DirectML off), so the redistributable
+  DirectML.dll ships next to the plug-in instead of depending on the
+  inbox Windows version.
 
 ### Non-destructive re-editing (audit, 2026-11-09)
 
