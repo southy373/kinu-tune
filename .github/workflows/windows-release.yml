@@ -1,4 +1,4 @@
-# Builds the Windows (x64) VST3 for an existing GitHub release and
+# Builds the Windows (x64, CPU) VST3 for an existing GitHub release and
 # attaches the zip to it, then the installer made from that zip (see
 # windows-installer.yml). Run it by hand (Actions > Windows release build >
 # Run workflow) after the release exists. fcpe.onnx, cent_table.bin,
@@ -62,14 +62,12 @@ jobs:
       # Release tags keep the original Kinu Tune identity. Test builds from a branch
       # use the separate Pure Tune identity so both can coexist in a DAW.
       # Use the runner's default Visual Studio generator (as upstream PitchNet
-      # does). DirectML is on so the ONNX models (BigVGAN included) can run
-      # on the GPU, with the redistributable DirectML.dll bundled next to
-      # the plug-in instead of depending on the inbox Windows version; the
-      # vocoders fall back to the CPU where DirectML cannot run.
+      # does) and the CPU build of ONNX Runtime; DirectML is the Windows
+      # default in CMakeLists.txt, so turn it off explicitly.
       - name: Configure
         env:
           DEV_BUILD: ${{ inputs.ref != '' }}
-        run: cmake -B build -DUSE_DIRECTML=ON -DUSE_BUNDLED_DIRECTML_RUNTIME=ON -DPITCHNET_DEV_BUILD=$env:DEV_BUILD -DPITCHNET_ARA_DIAGNOSTICS=OFF -DPITCHNET_BUILD_TESTS=OFF
+        run: cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_DEV_BUILD=$env:DEV_BUILD -DPITCHNET_ARA_DIAGNOSTICS=OFF -DPITCHNET_BUILD_TESTS=OFF
 
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
