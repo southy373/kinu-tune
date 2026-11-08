@@ -271,8 +271,10 @@ int main()
                         (MAX_MIDI_NOTE - 61.8f) * f.roll.getPixelsPerSemitone() +
                         f.roll.getPixelsPerSemitone() * 0.5f -
                         static_cast<float>(f.roll.getScrollY());
+        // The command modifier is Ctrl on Windows, where this toggle lives;
+        // a literal Ctrl+click would read as a popup-menu click on macOS.
         const auto ctrlClick = juce::ModifierKeys(
-            juce::ModifierKeys::ctrlModifier |
+            juce::ModifierKeys::commandModifier |
             juce::ModifierKeys::leftButtonModifier);
         f.roll.mouseDown(event(f.roll, {x, y}, ctrlClick, 1));
         CHECK(f.note(1).isSelected()); // Ctrl+click adds it
@@ -284,7 +286,7 @@ int main()
         double seekedTo = -1.0;
         f.roll.onSeek = [&seekedTo](double time) { seekedTo = time; };
         const auto shiftCtrlClick = juce::ModifierKeys(
-            juce::ModifierKeys::ctrlModifier |
+            juce::ModifierKeys::commandModifier |
             juce::ModifierKeys::shiftModifier |
             juce::ModifierKeys::leftButtonModifier);
         f.roll.mouseDown(event(f.roll, {x, y}, shiftCtrlClick, 1));
