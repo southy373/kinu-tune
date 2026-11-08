@@ -161,13 +161,29 @@ AiResynthesisSupport getAiResynthesisSupport()
   if (!OnnxRuntime::isAvailable())
     return AiResynthesisSupport::Unavailable;
 
-  // BigVGAN runs on the CPU in every build of this fork (no GPU execution
-  // provider is wired for it), so the honest answer is CpuOnly: selectable,
-  // with slow renders.
-  if (PlatformPaths::getBigVganModelFile().existsAsFile())
-    return AiResynthesisSupport::CpuOnly;
+  if (!PlatformPaths::getBigVganModelFile().existsAsFile())
+    return AiResynthesisSupport::Unavailable;
+
+#if defined(_WIN32) && defined(USE_DIRECTML)
+  // BigVGANVocoder prefers DirectML in DirectML builds, in the same way
+  // as the NSF vocoder below. A DirectML runtime can be installed on a
+  // machine with no hardware adapter to run it on, and the vocoder then
+  // falls back to the CPU, so require both before calling it accelerated.
+  try
+  {
+    for (const auto &provider : Ort::GetAvailableProviders())
+      if (provider == "DmlExecutionProvider" &&
+          getWindowsGpuCapabilities().hasHardwareAdapter)
+        return AiResynthesisSupport::Accelerated;
+  }
+  catch (const std::exception &)
+  {
+  }
 #endif
+  return AiResynthesisSupport::CpuOnly;
+#else
   return AiResynthesisSupport::Unavailable;
+#endif
 }
 #else
 SynthesisEngineType defaultSynthesisEngineType()

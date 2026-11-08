@@ -53,8 +53,9 @@ enum class AiResynthesisSupport
  * - macOS: Accelerated (Core ML).
  * - Windows: Unavailable when the bundled ONNX Runtime cannot be loaded;
  *   Accelerated when a DirectML build finds DirectML and a hardware adapter;
- *   CpuOnly otherwise. The release build is CPU-only (no DirectML), and the
- *   vocoder still runs there, so the user may pick it.
+ *   CpuOnly otherwise. The Windows release build enables DirectML with a
+ *   bundled runtime, and the vocoders fall back to the CPU where DirectML
+ *   cannot run, so the user may pick AI there too.
  * - Linux, and any build without ONNX Runtime: Unavailable.
  *
  * Kept next to defaultSynthesisEngineType() so the two answers are decided in
