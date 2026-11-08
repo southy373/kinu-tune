@@ -58,6 +58,22 @@ The full history of the changes is in the git log of this repository.
   every later segment of the same pitch.
 - A click only selects a segment; Option/Alt-click splits it.
 - Double-click resets a segment to its analysed state.
+- Smart Controls default to "Default" in a fresh session (VariAudio's
+  initial view), not "Show All"; the choice is session-only.
+- Delete Segments (Backspace): the selected segments leave the editor and
+  their audio returns to the pristine original. The notes stay in the list
+  under a new `deleted` flag with every edit (pitch, formant, volume,
+  timing, shared-boundary companions) reset through the existing Restore
+  machinery, so the synthesizer's restore path copies the original
+  waveform back over their ranges on both engines. One undo step restores
+  the edits and clears the flag; the flag is saved in project files.
+- VariAudio Changes Bypass, a toggle in the Rendering card under the
+  engine radios: while on, resynthesis is suspended and playback is the
+  pristine original (see the audit note below for how the flags are kept
+  consistent). Session-only; it is never written to a project file.
+- Shift+Ctrl+click moves the playback cursor (dragging scrubs), taking
+  precedence over the Ctrl-click selection toggle; plain Ctrl+click keeps
+  toggling a segment in and out of the selection.
 - Dragging on empty space scrolls the view; Option/Alt + wheel or drag zooms
   vertically.
 - Zoom Full: Shift+F, or Option/Alt-double-click where there is no segment.
@@ -149,15 +165,14 @@ The full history of the changes is in the git log of this repository.
 - AI Resynthesis returns through BigVGAN v2 (44kHz / 128 band; code and
   weights MIT), gated on the model file instead of a build flag: when
   `bigvgan_v2_44khz_128band.onnx` is present in the models folder,
-  `getAiResynthesisSupport` reports support, a saved AI choice is
+  `getAiResynthesisSupport` reports CPU-only support, a saved AI choice is
   kept, and the engine can be selected; the default stays PSOLA and the NSF
   vocoder code is untouched. The model (~490 MB) is never committed:
   `tools/convert_bigvgan.py` generates it from the official checkpoint
   (Dynamo exporter, weights inlined into a single file) and the Windows CI
   and release workflows run it before configuring; the release zip ships it
   in its models folder. New code: `Source/Audio/BigVGANVocoder.{h,cpp}`
-  (ONNX wrapper, DirectML with CPU fallback; chunked inference with
-  trimmed context frames),
+  (CPU ONNX wrapper; chunked inference with trimmed context frames),
   `Source/Utils/BigVGANMel.{h,cpp}` (BigVGAN's mel: the existing Slaney
   filterbank at fmin 0 / fmax 22050 with a 1e-5 log floor - a new
   `MelSpectrogram` constructor parameter - plus BigVGAN's uncentred
@@ -168,25 +183,46 @@ The full history of the changes is in the git log of this repository.
   `BigVGANVocoder` and loads the model in preference to the NSF vocoder
   when AI Resynthesis is selected; the unavailable tooltip now names the
   BigVGAN file to place.
-- BigVGAN speed work (it rendered far slower than the NSF vocoder): in
-  DirectML builds `BigVGANVocoder` appends the DirectML execution
-  provider exactly like the NSF vocoder (memory pattern off, sequential
-  execution, single ORT thread), retries session creation with CPU
-  options when that fails, logs the provider it ended up on, and exposes
-  it through `isUsingGpu()` / `activeProviderName()`.
-  `getAiResynthesisSupport` reports Accelerated in that case (DirectML
-  provider present plus a hardware adapter) and CPU-only otherwise. On
-  the CPU the intra-op thread budget is about 70% of the logical cores
-  rather than half, leaving the host DAW headroom, and inference chunks
-  grow from 200 to 512 frames so the trimmed 32-frame context costs
-  proportionally less. The Windows CI and release workflows now
-  configure with `-DUSE_DIRECTML=ON -DUSE_BUNDLED_DIRECTML_RUNTIME=ON`
-  (they previously forced DirectML off), so the redistributable
-  DirectML.dll ships next to the plug-in instead of depending on the
-  inbox Windows version.
+
+### Non-destructive re-editing (audit, 2026-11-09)
+
+Verified in source, because re-editing a segment must always start from
+the original recording, never from the previously rendered audio:
+
+- Rendering reads only `AudioData::originalWaveform` (the copy taken at
+  analysis, `EditorController::analyzeAudio`); the PSOLA scratch is built
+  from it inside `IncrementalSynthesizer`, and the commit stage reads the
+  existing composite only to choose splice points. Reset/deleted segments
+  and the Changes Bypass restore from the same buffer.
+- The pitch model is level + contour: `basePitch` is a smoothed step
+  curve of the notes' current pitch levels (`BasePitchCurve::
+  generateForNotes`), and the analysed contour lives in each note's
+  `originalDeltaPitch`, which only analysis/segmentation
+  (`PitchCurveProcessor::rebuildCurvesFromSource`) and the legacy-load
+  repair ever write. Rebuilds (`rebuildBaseFromNotes` and friends)
+  recompose the global delta from the stored per-note source
+  (`Note::getActiveDeltaPitch`) with the note's transform parameters
+  applied; the edited curve and the rendered audio are never re-analysed.
+  `composeF0InPlace` writes only the derived cache `AudioData::f0`.
+- `denseF0`, the denominator of the synthesis pitch ratio
+  (`IncrementalSynthesizer::buildPitchRatioCurve`), is written only at
+  analysis and in load fallbacks when the saved array is empty.
+- A pitch drag anchors on the gesture start (the note's pitch then, and
+  the pointer position) and folds to an absolute target on release
+  (`NotePitch::applyEdit`); the F0 snapshot it keeps is for undo only.
+- Formant, volume and timing are absolute per-note parameters; source
+  frames (`srcStartFrame`/`srcEndFrame`) never change after detection,
+  and the rendered-frame bounds are bookkeeping only.
+- Saving persists the pristine data verbatim (per-note
+  `originalDeltaPitch`/`bakedDeltaPitch` and the global `basePitch`,
+  `baseF0`, `deltaPitch`, `denseF0` arrays in both the JSON format and
+  the binary archive), and loading restores them verbatim; the
+  derive-from-F0 fallbacks run only for legacy files that never stored
+  them. `tests/ChangesBypassTests.cpp` and the inspector tests pin the
+  bypass and delete behaviour above.
 
 ### Defaults
-- Pitch Snap Mode Absolute, smart controls "Show All", scale shown in the piano
+- Pitch Snap Mode Absolute, smart controls "Default", scale shown in the piano
   roll, for new projects. Saved projects keep their saved settings.
 
 ### Notices
@@ -211,8 +247,11 @@ The full history of the changes is in the git log of this repository.
 - New unit tests: HarmonyIntervalTests, HarmonyApplyTests,
   VariAudioControlTests, VariAudioInspectorTests, AuditionOutputTests,
   AuditionHandoffTests, SynthesisEngineShareTests, AiResynthesisChoiceTests,
+  ChangesBypassTests,
   and RenderSnapshots (renders
-  the piano roll and inspector to PNG files).
+  the piano roll and inspector to PNG files). VariAudioInspectorTests also
+  covers Delete Segments (flag, full edit reset, undo/redo, serializer
+  round-trip) and the Ctrl+click toggle vs Shift+Ctrl+click seek.
 - tests/SourceGuard.cmake: fails when code outside the allowed files writes a
   note's pitch directly, calls the engine's audition loop directly, or creates
   a plug-in EditorController outside Source/Plugin/RenderControllers.h.
