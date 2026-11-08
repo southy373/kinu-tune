@@ -14,9 +14,22 @@ namespace
   // Output frames generated per chunk. BigVGAN is fully convolutional, so
   // chunking only needs enough context on both sides for the receptive
   // field; the context frames are inferred and then trimmed, which avoids
-  // crossfade artefacts entirely.
-  constexpr size_t kChunkFrames = 200;
+  // crossfade artefacts entirely. At 512 output frames the trimmed
+  // context (32 frames a side) costs about 12% extra inference, against
+  // about 27% at the previous 200.
+  constexpr size_t kChunkFrames = 512;
   constexpr size_t kContextFrames = 32;
+
+  // CPU thread budget for BigVGAN inference: about 70% of the logical
+  // cores (12 threads -> 8 on a Core i5-10400F), never fewer than 2.
+  // Rendering runs on a background worker while the host DAW keeps
+  // playing back and handling its UI, so a share of the machine is
+  // deliberately left alone instead of taking every core.
+  int bigVganCpuThreadCount()
+  {
+    return std::max(2, static_cast<int>(std::thread::hardware_concurrency() *
+                                        0.7));
+  }
 } // namespace
 
 BigVGANVocoder::BigVGANVocoder()
@@ -521,14 +534,10 @@ Ort::SessionOptions BigVGANVocoder::createSessionOptions()
     // CPU: undo the settings DirectML needed changed.
     sessionOptions.EnableMemPattern();
     sessionOptions.SetExecutionMode(ORT_PARALLEL);
-    const int numThreads =
-        std::max(1u, std::thread::hardware_concurrency()) / 2;
-    sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
+    sessionOptions.SetIntraOpNumThreads(bigVganCpuThreadCount());
   }
 #else
-  const int numThreads =
-      std::max(1u, std::thread::hardware_concurrency()) / 2;
-  sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
+  sessionOptions.SetIntraOpNumThreads(bigVganCpuThreadCount());
 #endif
   return sessionOptions;
 }
@@ -540,10 +549,7 @@ Ort::SessionOptions BigVGANVocoder::createCpuFallbackSessionOptions()
       GraphOptimizationLevel::ORT_ENABLE_ALL);
   sessionOptions.EnableMemPattern();
   sessionOptions.EnableCpuMemArena();
-
-  const int numThreads =
-      std::max(1u, std::thread::hardware_concurrency()) / 2;
-  sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
+  sessionOptions.SetIntraOpNumThreads(bigVganCpuThreadCount());
   return sessionOptions;
 }
 #endif
