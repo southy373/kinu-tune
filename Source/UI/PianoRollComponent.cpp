@@ -2050,6 +2050,24 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     return;
   }
 
+  // Shift+Ctrl+click moves the playback cursor (Nuendo-style seek); held
+  // and dragged, it scrubs like the middle button. It outranks both the
+  // Ctrl-click selection toggle and the Ctrl zoom-drag, so with Shift also
+  // down a click is never a selection edit. On Windows Ctrl is also the
+  // command key, so either flag counts; Alt stays out of it (Alt has its
+  // own canvas gestures).
+  if (e.mods.isLeftButtonDown() && e.mods.isShiftDown() &&
+      (e.mods.isCtrlDown() || e.mods.isCommandDown()) &&
+      !e.mods.isAltDown() && e.x >= pianoKeysWidth)
+  {
+    shiftCtrlSeekActive = true;
+    double time = std::max(getTimelineStart(), xToTime(adjustedX));
+    setCursorTime(time);
+    if (onSeek)
+      onSeek(time);
+    return;
+  }
+
   // Cmd-click on a segment toggles its selection (VariAudio); zoom-drag
   // stays available from empty canvas.
   const bool cmdClickOnSegment =
@@ -2246,6 +2264,16 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
     return;
   }
 
+  if (shiftCtrlSeekActive)
+  {
+    float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
+    double time = std::max(getTimelineStart(), xToTime(adjustedX));
+    setCursorTime(time);
+    if (onSeek)
+      onSeek(time);
+    return;
+  }
+
   if (modifierZoomDragActive)
   {
     applyModifierZoomDrag(e);
@@ -2302,6 +2330,12 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
   if (middleButtonScrubActive)
   {
     middleButtonScrubActive = false;
+    return;
+  }
+
+  if (shiftCtrlSeekActive)
+  {
+    shiftCtrlSeekActive = false;
     return;
   }
 

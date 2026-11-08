@@ -260,6 +260,39 @@ int main()
         CHECK(!restored.getNotes()[0].isDeleted());
     }
 
+    // --- Ctrl+click toggles a segment; Shift+Ctrl+click seeks instead -----
+    {
+        Fixture f;
+        f.roll.fitPitchRangeToView(58.0f, 66.0f);
+        const float x = PianoRollComponent::pianoKeysWidth +
+                        static_cast<float>(framesToSeconds(150)) * f.roll.getPixelsPerSecond() -
+                        static_cast<float>(f.roll.getScrollX());
+        const float y = PianoRollComponent::headerHeight +
+                        (MAX_MIDI_NOTE - 61.8f) * f.roll.getPixelsPerSemitone() +
+                        f.roll.getPixelsPerSemitone() * 0.5f -
+                        static_cast<float>(f.roll.getScrollY());
+        const auto ctrlClick = juce::ModifierKeys(
+            juce::ModifierKeys::ctrlModifier |
+            juce::ModifierKeys::leftButtonModifier);
+        f.roll.mouseDown(event(f.roll, {x, y}, ctrlClick, 1));
+        CHECK(f.note(1).isSelected()); // Ctrl+click adds it
+        f.roll.mouseUp(event(f.roll, {x, y}, ctrlClick, 1));
+        f.roll.mouseDown(event(f.roll, {x, y}, ctrlClick, 1));
+        CHECK(!f.note(1).isSelected()); // and takes it away again
+        f.roll.mouseUp(event(f.roll, {x, y}, ctrlClick, 1));
+
+        double seekedTo = -1.0;
+        f.roll.onSeek = [&seekedTo](double time) { seekedTo = time; };
+        const auto shiftCtrlClick = juce::ModifierKeys(
+            juce::ModifierKeys::ctrlModifier |
+            juce::ModifierKeys::shiftModifier |
+            juce::ModifierKeys::leftButtonModifier);
+        f.roll.mouseDown(event(f.roll, {x, y}, shiftCtrlClick, 1));
+        CHECK(seekedTo >= 0.0);          // the playhead moved...
+        CHECK(!f.note(1).isSelected());  // ...and the click was not a toggle
+        f.roll.mouseUp(event(f.roll, {x, y}, shiftCtrlClick, 1));
+    }
+
     // --- Option/Alt: vertical zoom only (wheel and drag) -------------------
     {
         Fixture f;
