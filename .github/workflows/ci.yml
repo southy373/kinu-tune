@@ -73,9 +73,12 @@ jobs:
         run: python tools/convert_bigvgan.py
 
       # PITCHNET_BUILD_TESTS registers the tests; only ModelInferenceTests is
-      # built and run here (the rest run on macOS).
+      # built and run here (the rest run on macOS). DirectML is on, matching
+      # the release build: the hosted runner has no GPU, so the execution
+      # providers fall back to the CPU there, and BigVGAN sessions are only
+      # created at analysis time, which the host check below never reaches.
       - name: Configure
-        run: cmake -B build -DUSE_DIRECTML=OFF -DPITCHNET_BUILD_TESTS=ON
+        run: cmake -B build -DUSE_DIRECTML=ON -DUSE_BUNDLED_DIRECTML_RUNTIME=ON -DPITCHNET_BUILD_TESTS=ON
 
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
