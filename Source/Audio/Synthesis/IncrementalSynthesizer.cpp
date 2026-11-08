@@ -786,6 +786,13 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     for (auto &note : project->getNotes()) {
       const bool hasEdit = !note.isNeutralForOriginalWaveform();
       note.setSynthDirty(hasEdit);
+      // The render gates (EditorController and this synthesizer) key off
+      // the generic dirty flag, so an edited note must carry it too:
+      // lifting the bypass goes through the normal render request, and
+      // without it that request would early-return and never re-render
+      // the notes the bypass left unrendered.
+      if (hasEdit)
+        note.markDirty();
     }
     if (onComplete)
       onComplete(true);
