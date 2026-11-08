@@ -33,7 +33,7 @@ std::vector<Note*> BoxSelector::getNotesInRect(Project* project, CoordinateMappe
     auto rect = getSelectionRect();
 
     for (auto& note : project->getNotes()) {
-        if (note.isRest())
+        if (note.isRestOrDeleted())
             continue;
 
         float noteX = framesToSeconds(note.getStartFrame()) * mapper->getPixelsPerSecond();

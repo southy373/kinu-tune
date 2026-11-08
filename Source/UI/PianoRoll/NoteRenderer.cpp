@@ -135,7 +135,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
   int selectedNoteCount = 0;
   for (const auto &note : project->getNotes())
   {
-    if (!note.isRest() && note.isSelected())
+    if (!note.isRestOrDeleted() && note.isSelected())
       ++selectedNoteCount;
   }
   const bool showSelectionStatus =
@@ -153,7 +153,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
     std::vector<const Note *> timelineNotes;
     for (const auto &candidate : project->getNotes())
-      if (!candidate.isRest())
+      if (!candidate.isRestOrDeleted())
         timelineNotes.push_back(&candidate);
     std::sort(timelineNotes.begin(), timelineNotes.end(),
               [](const Note *left, const Note *right)
@@ -260,7 +260,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
 
   for (auto &note : project->getNotes())
   {
-    if (note.isRest())
+    if (note.isRestOrDeleted())
       continue;
     if (drawHoveredBody && &note != hoveredNote)
       continue;
@@ -863,7 +863,7 @@ void NoteRenderer::draw(juce::Graphics &g, Pass pass, bool splitModeActive,
     timelineNotes.reserve(project->getNotes().size());
     for (const auto &note : project->getNotes())
     {
-      if (!note.isRest())
+      if (!note.isRestOrDeleted())
         timelineNotes.push_back(&note);
     }
     std::sort(timelineNotes.begin(), timelineNotes.end(),

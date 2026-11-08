@@ -390,6 +390,9 @@ private:
   std::vector<Note *> getResetTargetNotes(Note &note) const;
   enum class NoteRestoreMode { Pitch, Formant, Amplitude, All };
   void resetNoteEdits(Note &note, NoteRestoreMode mode = NoteRestoreMode::Pitch);
+  // VariAudio's Delete Segments (Backspace): removes the selected segments
+  // from editing; their audio returns to the pristine original. Undoable.
+  bool deleteSelectedSegments();
   std::unique_ptr<UndoableAction> createResetTimingAction(Note &note);
   void resetNoteTiming(Note &note);
   // Runs a Restore action, records it, and reports it via

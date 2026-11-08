@@ -68,7 +68,7 @@ Note* NoteSplitter::findNoteAt(float x, float y) {
     float pixelsPerSemitone = coordMapper->getPixelsPerSemitone();
 
     for (auto& note : project->getNotes()) {
-        if (note.isRest())
+        if (note.isRestOrDeleted())
             continue;
 
         float noteX = framesToSeconds(note.getStartFrame()) * pixelsPerSecond;
@@ -302,13 +302,13 @@ std::pair<Note*, Note*> NoteSplitter::findMergeableNotesAt(float x, float y)
     for (size_t i = 0; i < notes.size(); ++i)
     {
         auto &left = notes[i];
-        if (left.isRest())
+        if (left.isRestOrDeleted())
             continue;
 
         for (size_t j = i + 1; j < notes.size(); ++j)
         {
             auto &right = notes[j];
-            if (right.isRest())
+            if (right.isRestOrDeleted())
                 continue;
 
             // Only expose merge on a true split: the output and source frame
@@ -340,7 +340,7 @@ std::pair<Note*, Note*> NoteSplitter::findMergeableNotesAt(float x, float y)
 
 bool NoteSplitter::mergeNotes(Note *first, Note *second)
 {
-    if (!project || !first || !second || first->isRest() || second->isRest() ||
+    if (!project || !first || !second || first->isRestOrDeleted() || second->isRestOrDeleted() ||
         first->getEndFrame() != second->getStartFrame() ||
         first->getSrcEndFrame() != second->getSrcStartFrame())
         return false;

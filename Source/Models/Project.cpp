@@ -117,7 +117,7 @@ void Project::selectAllNotes(bool includeRests)
 {
     for (auto &note : notes)
     {
-        if (!includeRests && note.isRest())
+        if (!includeRests && note.isRestOrDeleted())
             continue;
         note.setSelected(true);
     }
@@ -153,7 +153,9 @@ int Project::markEditedNotesDirty()
     int end = -1;
     for (auto &note : notes)
     {
-        if (note.isRest())
+        // Deleted segments stay on the pristine original even when a global
+        // edit dirties everything else: they are outside editing entirely.
+        if (note.isRestOrDeleted())
             continue;
         if (!wholeProjectEdited && note.isNeutralForOriginalWaveform())
             continue;

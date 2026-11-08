@@ -247,6 +247,83 @@ namespace
     juce::String name;
     std::unique_ptr<UndoableAction> timing;
   };
+
+  // VariAudio's Delete Segments: the segment leaves the editor and its
+  // audio returns to the pristine original. The note itself stays in the
+  // list, flagged deleted, with every edit reset - so the existing restore
+  // path (a dirty, neutral note is restored from the original waveform by
+  // the synthesizer, PSOLA and BigVGAN alike) does the audio side, and
+  // undo only restores the captured edit state and clears the flag.
+  class NoteDeleteAction final : public UndoableAction
+  {
+  public:
+    NoteDeleteAction(Project& project, std::vector<Note*> notes,
+                     std::unique_ptr<UndoableAction> timing)
+        : project(project), notes(std::move(notes)), timing(std::move(timing))
+    {
+      before.reserve(this->notes.size());
+      for (const auto* note : this->notes)
+        before.push_back(NoteEditState::capture(*note));
+    }
+
+    void undo() override
+    {
+      if (timing)
+        timing->undo();
+      apply(before, false);
+    }
+    void redo() override
+    {
+      applyDeleted();
+      if (timing)
+        timing->redo();
+    }
+    juce::String getName() const override { return "Delete Segments"; }
+
+  private:
+    void applyDeleted()
+    {
+      int dirtyStart = std::numeric_limits<int>::max();
+      int dirtyEnd = std::numeric_limits<int>::min();
+      for (auto* note : notes)
+      {
+        if (!note)
+          continue;
+        NoteEditState::defaultsFor(*note).applyTo(*note);
+        note->setDeleted(true);
+        note->setSelected(false);
+        dirtyStart = std::min(dirtyStart, note->getStartFrame());
+        dirtyEnd = std::max(dirtyEnd, note->getEndFrame());
+      }
+      project.setModified(true);
+      PitchCurveProcessor::rebuildBaseFromNotes(project);
+      // Same range the edit and its undo mark (Project::markNoteEditDirtyRange).
+      project.markNoteEditDirtyRange(dirtyStart, dirtyEnd);
+    }
+
+    void apply(const std::vector<NoteEditState>& states, bool deleted)
+    {
+      int dirtyStart = std::numeric_limits<int>::max();
+      int dirtyEnd = std::numeric_limits<int>::min();
+      for (size_t i = 0; i < notes.size() && i < states.size(); ++i)
+      {
+        if (!notes[i])
+          continue;
+        states[i].applyTo(*notes[i]);
+        notes[i]->setDeleted(deleted);
+        dirtyStart = std::min(dirtyStart, notes[i]->getStartFrame());
+        dirtyEnd = std::max(dirtyEnd, notes[i]->getEndFrame());
+      }
+      project.setModified(true);
+      PitchCurveProcessor::rebuildBaseFromNotes(project);
+      project.markNoteEditDirtyRange(dirtyStart, dirtyEnd);
+    }
+
+    Project& project;
+    std::vector<Note*> notes;
+    std::vector<NoteEditState> before;
+    std::unique_ptr<UndoableAction> timing;
+  };
 }
 
 PianoRollComponent::PianoRollComponent()
@@ -3167,7 +3244,7 @@ std::vector<Note *> PianoRollComponent::getInspectorTargets() const
     return all;
   for (auto &note : project->getNotes())
   {
-    if (note.isRest())
+    if (note.isRestOrDeleted())
       continue;
     all.push_back(&note);
     if (note.isSelected())
@@ -3405,7 +3482,7 @@ Note *PianoRollComponent::findContiguousNeighbour(const Note &note,
 
   for (auto &other : project->getNotes())
   {
-    if (&other == &note || other.isRest() || chunkIndex(other) != noteChunk)
+    if (&other == &note || other.isRestOrDeleted() || chunkIndex(other) != noteChunk)
       continue;
     const bool joins =
         next ? other.getStartFrame() == note.getEndFrame() &&
@@ -3531,7 +3608,7 @@ bool PianoRollComponent::selectAdjacentSegment(bool next)
 
   std::vector<Note *> ordered;
   for (auto &note : project->getNotes())
-    if (!note.isRest())
+    if (!note.isRestOrDeleted())
       ordered.push_back(&note);
   if (ordered.empty())
     return false;
@@ -3570,7 +3647,7 @@ void PianoRollComponent::selectFollowingSamePitch(Note &note)
   const int pitch = static_cast<int>(std::round(note.getAdjustedMidiNote()));
   project->deselectAllNotes();
   for (auto &other : project->getNotes())
-    if (!other.isRest() && other.getStartFrame() >= note.getStartFrame() &&
+    if (!other.isRestOrDeleted() && other.getStartFrame() >= note.getStartFrame() &&
         static_cast<int>(std::round(other.getAdjustedMidiNote())) == pitch)
       other.setSelected(true);
   updatePitchToolHandlesFromSelection();
@@ -3744,6 +3821,16 @@ bool PianoRollComponent::keyPressed(const juce::KeyPress &key)
     return false;
 
   const int keyCode = key.getKeyCode();
+  if (keyCode == juce::KeyPress::backspaceKey)
+  {
+    // VariAudio: Backspace deletes the selected segments. A text editor
+    // anywhere keeps its editing keys: this component's subtree has none,
+    // but never steal Backspace from one that has focus.
+    if (dynamic_cast<juce::TextEditor *>(
+            juce::Component::getCurrentlyFocusedComponent()) != nullptr)
+      return false;
+    return deleteSelectedSegments();
+  }
   if (keyCode == juce::KeyPress::upKey || keyCode == juce::KeyPress::downKey)
   {
     // VariAudio: Up/Down move by a semitone; Shift moves in cent steps and
@@ -4022,7 +4109,7 @@ bool PianoRollComponent::centerOnCurrentPitchRange()
 
   for (const auto &note : project->getNotes())
   {
-    if (note.isRest())
+    if (note.isRestOrDeleted())
       continue;
 
     const float midi = note.getAdjustedMidiNote();
@@ -4258,8 +4345,8 @@ Note *PianoRollComponent::findNoteAt(float x, float y)
 
   for (auto &note : project->getNotes())
   {
-    // Skip rest notes
-    if (note.isRest())
+    // Skip rest notes and deleted segments
+    if (note.isRestOrDeleted())
       continue;
 
     float noteX = framesToSeconds(note.getStartFrame()) * pixelsPerSecond;
@@ -4470,7 +4557,7 @@ std::vector<Note *> PianoRollComponent::getResetTargetNotes(Note &note) const
 
   std::vector<Note *> selected;
   for (auto &candidate : project->getNotes())
-    if (!candidate.isRest() && candidate.isSelected())
+    if (!candidate.isRestOrDeleted() && candidate.isSelected())
       selected.push_back(&candidate);
   return note.isSelected() && selected.size() > 1 ? selected : targets;
 }
@@ -4499,6 +4586,27 @@ void PianoRollComponent::resetNoteEdits(Note &note, NoteRestoreMode mode)
       all ? "Restore All Edits" : mode == NoteRestoreMode::Formant
           ? "Restore Formant" : "Restore Pitch",
       all ? createResetTimingAction(note) : nullptr));
+}
+
+bool PianoRollComponent::deleteSelectedSegments()
+{
+  if (!project || editMode != EditMode::Select)
+    return false;
+
+  std::vector<Note *> targets;
+  for (auto &note : project->getNotes())
+    if (!note.isRestOrDeleted() && note.isSelected())
+      targets.push_back(&note);
+  if (targets.empty())
+    return false;
+
+  // The timing part is built first, while the notes still hold their
+  // edited frames: it restores the deleted segments' own ranges and moves
+  // any shared-boundary companions back with them (Restore Timing rules).
+  auto timing = createResetTimingAction(*targets.front());
+  applyRestoreAction(std::make_unique<NoteDeleteAction>(
+      *project, std::move(targets), std::move(timing)));
+  return true;
 }
 
 void PianoRollComponent::applyRestoreAction(std::unique_ptr<UndoableAction> action)

@@ -830,6 +830,8 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     obj->setProperty("sourceAmplitude", note.getSourceAmplitude());
     obj->setProperty("formantShift", note.getFormantShift());
     obj->setProperty("rest", note.isRest());
+    if (note.isDeleted())
+        obj->setProperty("deleted", true);
 
     // Lyric/Phoneme
     if (note.hasLyric())
@@ -897,6 +899,7 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     note.setSourceAmplitude(static_cast<float>(json.getProperty("sourceAmplitude", 0.0)));
     note.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     note.setRest(json.getProperty("rest", false));
+    note.setDeleted(static_cast<bool>(json.getProperty("deleted", false)));
 
     // Lyric/Phoneme
     auto lyric = json.getProperty("lyric", juce::var());

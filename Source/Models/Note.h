@@ -208,6 +208,19 @@ public:
     bool isRest() const { return rest; }
     void setRest(bool r) { rest = r; }
 
+    // Deleted segment (VariAudio's Delete Segments): the user removed this
+    // segment from editing. Deleting resets every edit on the note, so the
+    // segment is neutral and its audio is the pristine original; the flag
+    // only records that the segment itself is gone from the editor. Undo
+    // restores the edits and clears the flag.
+    bool isDeleted() const { return deleted; }
+    void setDeleted(bool d) { deleted = d; }
+
+    // True when the segment takes no part in editing or display: analysis
+    // rests and user-deleted segments. Rendering internals that work from
+    // the analysis (base pitch, timing regions) keep using isRest() alone.
+    bool isRestOrDeleted() const { return rest || deleted; }
+
     // Lyric (character/syllable for this note)
     juce::String getLyric() const { return lyric; }
     void setLyric(const juce::String& text) { lyric = text; }
@@ -269,6 +282,7 @@ private:
     bool dirty = false;       // For incremental synthesis (display/trigger)
     bool synthDirty = true;   // Needs re-synthesis (separate from display dirty)
     bool rest = false;        // Rest note (silence placeholder)
+    bool deleted = false;     // User-deleted segment (original audio passthrough)
 
     juce::String lyric;   // Lyric text (e.g., "a", "SP" for silence)
     juce::String phoneme; // Phoneme (e.g., "a", "sp", for pronunciation)

@@ -3,6 +3,7 @@
 // Affero General Public License, version 3. See LICENSE and MODIFICATIONS.md.
 
 #include "../Source/Audio/ResampledLoopAudition.h"
+#include "../Source/Models/ProjectSerializer.h"
 #include "../Source/UI/PianoRollComponent.h"
 #include "../Source/UI/VariAudioInspector.h"
 #include "../Source/Undo/PitchUndoManager.h"
@@ -203,6 +204,60 @@ int main()
         CHECK(f.history.canUndo());
         f.history.undo();
         CHECK(near(f.note(1).getMidiNote(), 63.0f));
+    }
+
+    // --- Delete Segments: gone from the editor, edits reset, one undo -----
+    {
+        Fixture f;
+        auto& n = f.note(1);
+        n.setMidiNote(63.0f);
+        n.setFormantShift(3.0f);
+        n.setVolumeDb(-6.0f);
+        n.setStartFrame(90); // timing edit
+        n.setSelected(true);
+        CHECK(f.roll.deleteSelectedSegments());
+        CHECK(n.isDeleted());
+        CHECK(!n.isSelected());
+        CHECK(near(n.getMidiNote(), 61.8f)); // analysed pitch again
+        CHECK(near(n.getFormantShift(), 0.0f));
+        CHECK(near(n.getVolumeDb(), 0.0f));
+        CHECK(n.getStartFrame() == 100); // timing restored too
+        CHECK(n.isNeutralForOriginalWaveform());
+        CHECK(f.roll.getInspectorTargets().size() == 2); // no longer a target
+        CHECK(f.history.canUndo());
+        f.history.undo();
+        CHECK(!n.isDeleted());
+        CHECK(near(n.getMidiNote(), 63.0f));
+        CHECK(near(n.getFormantShift(), 3.0f));
+        CHECK(near(n.getVolumeDb(), -6.0f));
+        CHECK(n.getStartFrame() == 90);
+        f.history.redo();
+        CHECK(n.isDeleted());
+        CHECK(near(n.getMidiNote(), 61.8f));
+    }
+
+    // --- Delete Segments: Backspace key, and a no-op with no selection -----
+    {
+        Fixture f;
+        CHECK(!f.roll.deleteSelectedSegments());
+        CHECK(!f.history.canUndo());
+        f.note(0).setSelected(true);
+        CHECK(f.roll.keyPressed(juce::KeyPress(juce::KeyPress::backspaceKey)));
+        CHECK(f.note(0).isDeleted());
+        CHECK(f.history.canUndo());
+    }
+
+    // --- Delete Segments: the flag survives a project save/load ------------
+    {
+        Fixture f;
+        f.note(2).setSelected(true);
+        CHECK(f.roll.deleteSelectedSegments());
+        Project restored;
+        CHECK(ProjectSerializer::fromJson(restored,
+                                          ProjectSerializer::toJson(f.project)));
+        CHECK(restored.getNotes().size() == 3);
+        CHECK(restored.getNotes()[2].isDeleted());
+        CHECK(!restored.getNotes()[0].isDeleted());
     }
 
     // --- Option/Alt: vertical zoom only (wheel and drag) -------------------
