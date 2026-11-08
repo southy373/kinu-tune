@@ -20,6 +20,10 @@ on:
 
 permissions:
   contents: write
+  # The reusable windows-installer.yml workflow requests actions: read (it
+  # downloads the test-build artifact); a caller that sets any permission
+  # explicitly must grant it, or workflow validation fails at startup.
+  actions: read
 
 env:
   RELEASE_TAG: ${{ inputs.tag }}
