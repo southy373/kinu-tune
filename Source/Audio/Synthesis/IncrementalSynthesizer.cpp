@@ -784,8 +784,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     for (auto &note : project->getNotes())
       note.setRenderedEdit(false);
     for (auto &note : project->getNotes()) {
-      const bool hasEdit = !note.isNeutralForOriginalWaveform() ||
-                           note.hasPendingTimingPositionChange();
+      const bool hasEdit = !note.isNeutralForOriginalWaveform();
       note.setSynthDirty(hasEdit);
     }
     if (onComplete)
