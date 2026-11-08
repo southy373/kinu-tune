@@ -1,5 +1,6 @@
 #include "SynthesisEngineType.h"
 #include "../Utils/OnnxRuntime.h"
+#include "../Utils/PlatformPaths.h"
 
 #if defined(_WIN32) && defined(USE_DIRECTML) && defined(HAVE_ONNXRUNTIME)
 #include <onnxruntime_cxx_api.h>
@@ -134,19 +135,38 @@ const WindowsGpuCapabilities &getWindowsGpuCapabilities()
 
 #ifndef KINU_ENABLE_AI_RESYNTHESIS
 // Kinu Tune (speech build): the neural vocoder (PC-NSF-HiFiGAN, CC BY-NC-SA 4.0)
-// is not shipped or loaded. Classic PSOLA is the only engine.
+// is not shipped or loaded. AI Resynthesis is provided by BigVGAN v2 (MIT)
+// instead, and only when its model file has been placed in the models
+// folder; classic PSOLA remains the default and the fallback.
 SynthesisEngineType defaultSynthesisEngineType()
 {
   return SynthesisEngineType::Psola;
 }
 
-SynthesisEngineType synthesisEngineTypeForSavedPreference(SynthesisEngineType)
+SynthesisEngineType
+synthesisEngineTypeForSavedPreference(SynthesisEngineType type)
 {
-  return SynthesisEngineType::Psola;
+  // Keep a saved AI choice only while the BigVGAN model is actually there;
+  // otherwise the choice could never render and moves to Classic, matching
+  // how ParameterPanel treats an AI choice this machine cannot run.
+  if (type == SynthesisEngineType::Vocoder &&
+      getAiResynthesisSupport() == AiResynthesisSupport::Unavailable)
+    return SynthesisEngineType::Psola;
+  return type;
 }
 
 AiResynthesisSupport getAiResynthesisSupport()
 {
+#ifdef HAVE_ONNXRUNTIME
+  if (!OnnxRuntime::isAvailable())
+    return AiResynthesisSupport::Unavailable;
+
+  // BigVGAN runs on the CPU in every build of this fork (no GPU execution
+  // provider is wired for it), so the honest answer is CpuOnly: selectable,
+  // with slow renders.
+  if (PlatformPaths::getBigVganModelFile().existsAsFile())
+    return AiResynthesisSupport::CpuOnly;
+#endif
   return AiResynthesisSupport::Unavailable;
 }
 #else

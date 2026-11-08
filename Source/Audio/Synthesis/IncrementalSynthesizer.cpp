@@ -767,7 +767,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // a loaded one, and it does not want the mel.
   const bool usePsola = synthesisEngine == SynthesisEngineType::Psola;
 
-  if (!project || (!usePsola && !vocoder)) {
+  // AI Resynthesis renders through BigVGAN whenever its model is loaded:
+  // the PSOLA request below renders the edited pitch into a scratch
+  // waveform, and BigVGAN regenerates that waveform from its own mel. The
+  // NSF vocoder path further down runs only when BigVGAN is not loaded.
+  const bool useBigVgan =
+      !usePsola && bigVganVocoder != nullptr && bigVganVocoder->isLoaded();
+
+  if (!project || (!usePsola && !useBigVgan && !vocoder)) {
     if (onComplete)
       onComplete(false);
     return;
@@ -780,13 +787,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     return;
   }
 
-  if (!usePsola && !vocoder->isLoaded()) {
+  if (!usePsola && !useBigVgan && !vocoder->isLoaded()) {
     if (onComplete)
       onComplete(false);
     return;
   }
 
-  if (usePsola && audioData.originalWaveform.getNumSamples() == 0 &&
+  if ((usePsola || useBigVgan) &&
+      audioData.originalWaveform.getNumSamples() == 0 &&
       audioData.waveform.getNumSamples() == 0) {
     if (onComplete)
       onComplete(false);
@@ -875,7 +883,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       commitText = "(none)";
 
     LOG(juce::String("synthesizeRegion: engine=") +
-        (usePsola ? "PSOLA" : "Vocoder") +
+        (usePsola ? "PSOLA" : useBigVgan ? "BigVGAN" : "Vocoder") +
         "  noteAnchors=" + (hasDirtyNoteAnchors ? "yes" : "NO") +
         "  dirtyNotes=" + juce::String(dirtyNoteCount) +
         "  f0Dirty=[" + juce::String(f0DirtyStart) + "," +
@@ -1207,10 +1215,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   const int formantSampleRate = audioData.sampleRate;
   const bool hasGlobalFormant = std::abs(project->getFormantShift()) > 0.001f;
 
-  // Mel is the neural vocoder's input and is not cheap to copy, so the PSOLA
-  // path skips building it entirely.
+  // Mel is the NSF vocoder's input and is not cheap to copy, so the PSOLA
+  // path skips building it entirely. The BigVGAN path skips it too: its mel
+  // is computed from the scratch PSOLA render, not from this analysis mel.
   std::vector<std::vector<float>> melRange;
-  if (!usePsola) {
+  if (!usePsola && !useBigVgan) {
     melRange.assign(audioData.melSpectrogram.begin() + startFrame,
                     audioData.melSpectrogram.begin() + endFrame);
     applyNoteTimingToMel(*project, startFrame, endFrame, melRange);
@@ -1224,9 +1233,11 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
   // PSOLA's two input curves: where each output frame reads from in the
   // original audio, and how far its pitch has to move once it gets there.
-  // Built here on the message thread while the project is stable.
+  // Built here on the message thread while the project is stable. The
+  // BigVGAN path builds the same request: its PSOLA render is the scratch
+  // waveform BigVGAN then regenerates.
   DspSynthesisRequest dspRequest;
-  if (usePsola) {
+  if (usePsola || useBigVgan) {
     const auto sourceFrameMap = buildSourceFrameMap(startFrame, endFrame);
     auto pitchRatio =
         buildPitchRatioCurve(startFrame, endFrame, sourceFrameMap, adjustedF0Range);
@@ -1979,6 +1990,28 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   if (usePsola) {
     psola.renderAsync(std::move(dspRequest), std::move(onRendered),
                       capturedCancelFlag);
+  } else if (useBigVgan) {
+    // BigVGAN has no F0 input, so the edited pitch reaches it as audio:
+    // PSOLA renders the scratch waveform and BigVGAN regenerates it from
+    // its mel. The result rejoins through the same callback as every
+    // other engine, so blending and committing stay engine-agnostic.
+    auto *bigVgan = bigVganVocoder;
+    const int renderSampleRate = audioData.sampleRate;
+    psola.renderAsync(
+        std::move(dspRequest),
+        [bigVgan, renderSampleRate, onRendered = std::move(onRendered),
+         capturedCancelFlag](std::vector<float> scratch) mutable {
+          if (scratch.empty() ||
+              (capturedCancelFlag && capturedCancelFlag->load())) {
+            onRendered({});
+            return;
+          }
+          bigVgan->inferFromWaveformAsync(std::move(scratch),
+                                          renderSampleRate,
+                                          std::move(onRendered),
+                                          capturedCancelFlag);
+        },
+        capturedCancelFlag);
   } else {
     vocoder->inferAsync(std::move(melRange), std::move(adjustedF0Range),
                         std::move(onRendered));

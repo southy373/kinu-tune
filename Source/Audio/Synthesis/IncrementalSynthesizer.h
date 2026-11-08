@@ -2,6 +2,7 @@
 
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
+#include "../BigVGANVocoder.h"
 #include "../SynthesisEngineType.h"
 #include "../Vocoder.h"
 #include "PsolaSynthesizer.h"
@@ -19,8 +20,11 @@
  *
  * Two engines produce that synthesized audio. Vocoder regenerates the region
  * from its mel spectrogram; PsolaSynthesizer transforms the original waveform
- * instead. Everything after the render - blending, splicing, the audio move
- * patches - is identical for both.
+ * instead. AI Resynthesis takes a third route to the same span: PSOLA first
+ * renders the edited pitch into a scratch waveform and BigVGANVocoder
+ * regenerates that waveform from its own mel, because BigVGAN has no F0
+ * input to steer. Everything after the render - blending, splicing, the
+ * audio move patches - is identical for all three.
  */
 class IncrementalSynthesizer {
 public:
@@ -31,6 +35,7 @@ public:
   ~IncrementalSynthesizer();
 
   void setVocoder(Vocoder *v) { vocoder = v; }
+  void setBigVganVocoder(BigVGANVocoder *v) { bigVganVocoder = v; }
   void setProject(Project *p) { project = p; }
   void setSynthesisEngine(SynthesisEngineType type) { synthesisEngine = type; }
   SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
@@ -63,6 +68,7 @@ private:
                                           const std::vector<float> &targetF0) const;
 
   Vocoder *vocoder = nullptr;
+  BigVGANVocoder *bigVganVocoder = nullptr;
   Project *project = nullptr;
   SynthesisEngineType synthesisEngine = SynthesisEngineType::Vocoder;
   PsolaSynthesizer psola;
