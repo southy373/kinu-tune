@@ -3,9 +3,10 @@
 #include <algorithm>
 
 MelSpectrogram::MelSpectrogram(int sampleRate, int nFft, int hopSize,
-                               int numMels, float fMin, float fMax)
+                               int numMels, float fMin, float fMax,
+                               float logFloor)
     : sampleRate(sampleRate), nFft(nFft), hopSize(hopSize),
-      numMels(numMels), fMin(fMin), fMax(fMax),
+      numMels(numMels), fMin(fMin), fMax(fMax), logFloor(logFloor),
       fft(static_cast<int>(std::log2(nFft)))
 {
     // Create Hann window (periodic, matches librosa default)
@@ -200,9 +201,10 @@ std::vector<std::vector<float>> MelSpectrogram::compute(const float* audio, int 
                 sum += mag[k] * band.weights[k - band.startBin];
             }
             
-            // Log scale (natural log for vocoder compatibility)
-            // Use slightly larger epsilon to match common vocoder implementations
-            mel[i][m] = std::log(std::max(sum, 1e-10f));
+            // Log scale (natural log for vocoder compatibility). The floor
+            // is a constructor parameter because consumers disagree about
+            // it: the analysis mel uses 1e-10, BigVGAN expects 1e-5.
+            mel[i][m] = std::log(std::max(sum, logFloor));
         }
     }
     

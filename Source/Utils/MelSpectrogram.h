@@ -10,7 +10,8 @@ class MelSpectrogram
 {
 public:
     MelSpectrogram(int sampleRate = 44100, int nFft = 2048, int hopSize = 512,
-                   int numMels = 128, float fMin = 40.0f, float fMax = 16000.0f);
+                   int numMels = 128, float fMin = 40.0f, float fMax = 16000.0f,
+                   float logFloor = 1e-10f);
     ~MelSpectrogram() = default;
     
     /**
@@ -39,6 +40,7 @@ private:
     int numMels;
     float fMin;
     float fMax;
+    float logFloor;
     
     std::vector<float> window;  // Hann window
     std::vector<MelBand> melFilterbank;  // sparse filterbank
