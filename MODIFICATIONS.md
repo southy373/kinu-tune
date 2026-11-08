@@ -146,6 +146,27 @@ The full history of the changes is in the git log of this repository.
 - CMake no longer downloads GAME or requires the vocoder model;
   ModelInferenceTests checks FCPE and PSOLA only; the "not available" tooltip
   of AI Resynthesis says the build does not include it.
+- AI Resynthesis returns through BigVGAN v2 (44kHz / 128 band; code and
+  weights MIT), gated on the model file instead of a build flag: when
+  `bigvgan_v2_44khz_128band.onnx` is present in the models folder,
+  `getAiResynthesisSupport` reports CPU-only support, a saved AI choice is
+  kept, and the engine can be selected; the default stays PSOLA and the NSF
+  vocoder code is untouched. The model (~490 MB) is never committed:
+  `tools/convert_bigvgan.py` generates it from the official checkpoint
+  (Dynamo exporter, weights inlined into a single file) and the Windows CI
+  and release workflows run it before configuring; the release zip ships it
+  in its models folder. New code: `Source/Audio/BigVGANVocoder.{h,cpp}`
+  (CPU ONNX wrapper; chunked inference with trimmed context frames),
+  `Source/Utils/BigVGANMel.{h,cpp}` (BigVGAN's mel: the existing Slaney
+  filterbank at fmin 0 / fmax 22050 with a 1e-5 log floor - a new
+  `MelSpectrogram` constructor parameter - plus BigVGAN's uncentred
+  768-sample reflection framing). BigVGAN has no F0 input, so
+  `IncrementalSynthesizer` renders the edited pitch with PSOLA into a
+  scratch waveform and BigVGAN regenerates it from that waveform's mel;
+  the result rejoins the normal commit path. `EditorController` owns the
+  `BigVGANVocoder` and loads the model in preference to the NSF vocoder
+  when AI Resynthesis is selected; the unavailable tooltip now names the
+  BigVGAN file to place.
 
 ### Defaults
 - Pitch Snap Mode Absolute, smart controls "Show All", scale shown in the piano
