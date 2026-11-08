@@ -8,23 +8,34 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
 #ifdef HAVE_ONNXRUNTIME
 #include <onnxruntime_cxx_api.h>
+#ifdef USE_DIRECTML
+#include <dml_provider_factory.h>
+#endif
 #endif
 
 /**
- * BigVGAN v2 (44kHz / 128 band) neural vocoder wrapper, ONNX Runtime on CPU.
+ * BigVGAN v2 (44kHz / 128 band) neural vocoder wrapper, ONNX Runtime.
+ *
+ * In DirectML builds (Windows) the session runs on the GPU through the
+ * DirectML execution provider, exactly like the PC-NSF-HiFiGAN Vocoder;
+ * when DirectML cannot be appended or the session cannot be created with
+ * it, the class quietly falls back to a CPU session. Other builds are
+ * CPU-only.
  *
  * BigVGAN takes a mel spectrogram only - unlike the PC-NSF-HiFiGAN Vocoder
  * it has no F0 input, so pitch control has to happen before this class: the
  * caller renders the edited pitch into a scratch waveform (PSOLA), converts
  * that waveform to a BigVGAN mel (see BigVGANMel), and this class turns the
  * mel back into audio. It is far too slow for real-time use (roughly 10x
- * real time on CPU), so it only ever runs on the background re-render path,
- * in chunks with context frames trimmed at the joins.
+ * real time on CPU, less on a DirectML GPU), so it only ever runs on the
+ * background re-render path, in chunks with context frames trimmed at the
+ * joins.
  *
  * The model file (bigvgan_v2_44khz_128band.onnx, MIT, converted from the
  * official NVIDIA checkpoint by tools/convert_bigvgan.py) is loaded only
@@ -47,6 +58,17 @@ public:
   bool loadModel(const juce::File &modelPath);
 
   bool isLoaded() const { return loaded; }
+
+  /**
+   * Whether the loaded session runs through a GPU execution provider
+   * (DirectML). False before a successful load and after any CPU fallback.
+   */
+  bool isUsingGpu() const { return usingGpuProvider; }
+
+  /**
+   * Execution provider of the loaded session: "DirectML" or "CPU".
+   */
+  std::string activeProviderName() const { return activeProvider; }
 
   static bool isOnnxRuntimeAvailable();
 
@@ -100,6 +122,11 @@ private:
   int hopSize = 512;
   int numMels = 128;
 
+  // Execution provider of the current session, set by loadModel() before
+  // loaded becomes true (same plain-state style as Vocoder's device fields).
+  bool usingGpuProvider = false;
+  std::string activeProvider = "CPU";
+
   juce::File modelFile;
   std::unique_ptr<std::ofstream> logFile;
 
@@ -132,6 +159,11 @@ private:
   std::vector<float>
   inferChunkLocked(const std::vector<std::vector<float>> &mel);
 
+  // True when createSessionOptions() appended the DirectML provider, so
+  // loadModel() knows a session-creation failure is worth a CPU retry.
+  bool directMLProviderAppended = false;
+
   Ort::SessionOptions createSessionOptions();
+  Ort::SessionOptions createCpuFallbackSessionOptions();
 #endif
 };

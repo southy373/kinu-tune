@@ -220,8 +220,26 @@ bool BigVGANVocoder::loadModel(const juce::File &modelPath)
       return false;
     }
     log("Loading model from: " + pathStr.toStdString());
-    onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
-                                                 sessionOptions);
+    bool usedCpuFallback = false;
+    try
+    {
+      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
+                                                   sessionOptions);
+    }
+    catch (const Ort::Exception &e)
+    {
+      if (!directMLProviderAppended)
+        throw;
+
+      log("Failed to create session with DirectML: " +
+          std::string(e.what()));
+      log("Retrying BigVGAN session with CPU");
+
+      auto cpuOptions = createCpuFallbackSessionOptions();
+      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
+                                                   cpuOptions);
+      usedCpuFallback = true;
+    }
 #else
     std::string modelPathStr = modelPath.getFullPathName().toStdString();
     if (modelPathStr.empty())
@@ -230,8 +248,26 @@ bool BigVGANVocoder::loadModel(const juce::File &modelPath)
       return false;
     }
     log("Loading model from: " + modelPathStr);
-    onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathStr.c_str(),
-                                                 sessionOptions);
+    bool usedCpuFallback = false;
+    try
+    {
+      onnxSession = std::make_unique<Ort::Session>(
+          *onnxEnv, modelPathStr.c_str(), sessionOptions);
+    }
+    catch (const Ort::Exception &e)
+    {
+      if (!directMLProviderAppended)
+        throw;
+
+      log("Failed to create session with DirectML: " +
+          std::string(e.what()));
+      log("Retrying BigVGAN session with CPU");
+
+      auto cpuOptions = createCpuFallbackSessionOptions();
+      onnxSession = std::make_unique<Ort::Session>(
+          *onnxEnv, modelPathStr.c_str(), cpuOptions);
+      usedCpuFallback = true;
+    }
 #endif
 
     size_t numInputs = onnxSession->GetInputCount();
@@ -262,9 +298,15 @@ bool BigVGANVocoder::loadModel(const juce::File &modelPath)
           std::to_string(inputNames.size()) +
           ", outputs=" + std::to_string(outputNames.size()) + ")");
       onnxSession.reset();
+      usingGpuProvider = false;
+      activeProvider = "CPU";
       loaded = false;
       return false;
     }
+
+    usingGpuProvider = directMLProviderAppended && !usedCpuFallback;
+    activeProvider = usingGpuProvider ? "DirectML" : "CPU";
+    log("BigVGAN execution provider: " + activeProvider);
 
     modelFile = modelPath;
     loaded = true;
@@ -274,6 +316,8 @@ bool BigVGANVocoder::loadModel(const juce::File &modelPath)
   catch (const Ort::Exception &e)
   {
     log("Failed to load ONNX model: " + std::string(e.what()));
+    usingGpuProvider = false;
+    activeProvider = "CPU";
     loaded = false;
     return false;
   }
@@ -441,7 +485,62 @@ Ort::SessionOptions BigVGANVocoder::createSessionOptions()
   sessionOptions.EnableMemPattern();
   sessionOptions.EnableCpuMemArena();
 
-  // CPU only: BigVGAN ships in the CPU build of ONNX Runtime.
+  directMLProviderAppended = false;
+
+#ifdef USE_DIRECTML
+  // DirectML build: run BigVGAN on the GPU, in the same way as the NSF
+  // vocoder (Vocoder::createSessionOptions). GPU-backed providers run
+  // best with minimal ORT CPU thread pools.
+  sessionOptions.SetIntraOpNumThreads(1);
+  sessionOptions.SetInterOpNumThreads(1);
+  try
+  {
+    const OrtApi &ortApi = Ort::GetApi();
+    const OrtDmlApi *ortDmlApi = nullptr;
+    Ort::ThrowOnError(ortApi.GetExecutionProviderApi(
+        "DML", ORT_API_VERSION,
+        reinterpret_cast<const void **>(&ortDmlApi)));
+
+    sessionOptions.DisableMemPattern();
+    sessionOptions.SetExecutionMode(ORT_SEQUENTIAL);
+
+    Ort::ThrowOnError(ortDmlApi->SessionOptionsAppendExecutionProvider_DML(
+        sessionOptions, /*device_id=*/0));
+    directMLProviderAppended = true;
+    log("DirectML execution provider added (device 0)");
+  }
+  catch (const Ort::Exception &e)
+  {
+    log("Failed to add DirectML provider: " + std::string(e.what()));
+    log("Falling back to CPU");
+  }
+
+  if (!directMLProviderAppended)
+  {
+    // The provider could not be appended, so this session runs on the
+    // CPU: undo the settings DirectML needed changed.
+    sessionOptions.EnableMemPattern();
+    sessionOptions.SetExecutionMode(ORT_PARALLEL);
+    const int numThreads =
+        std::max(1u, std::thread::hardware_concurrency()) / 2;
+    sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
+  }
+#else
+  const int numThreads =
+      std::max(1u, std::thread::hardware_concurrency()) / 2;
+  sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
+#endif
+  return sessionOptions;
+}
+
+Ort::SessionOptions BigVGANVocoder::createCpuFallbackSessionOptions()
+{
+  Ort::SessionOptions sessionOptions;
+  sessionOptions.SetGraphOptimizationLevel(
+      GraphOptimizationLevel::ORT_ENABLE_ALL);
+  sessionOptions.EnableMemPattern();
+  sessionOptions.EnableCpuMemArena();
+
   const int numThreads =
       std::max(1u, std::thread::hardware_concurrency()) / 2;
   sessionOptions.SetIntraOpNumThreads(std::max(numThreads, 2));
