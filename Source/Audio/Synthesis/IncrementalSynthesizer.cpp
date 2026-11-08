@@ -763,6 +763,36 @@ std::vector<float> IncrementalSynthesizer::buildPitchRatioCurve(
 
 void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                                               CompleteCallback onComplete) {
+  // VariAudio Changes Bypass: no resynthesis happens at all. The composite
+  // waveform becomes the pristine original, so playback - and, in plugin
+  // mode, what the backend publishes to the host - is the untouched audio.
+  // Every edited note goes back to "not rendered" with its dirty flag set,
+  // which is exactly the state a fresh edit leaves behind, so lifting the
+  // bypass re-renders those notes through the normal path. Edit data
+  // itself is never touched here.
+  if (project && project->isChangesBypassed()) {
+    auto &audioData = project->getAudioData();
+    if (audioData.originalWaveform.getNumSamples() == 0) {
+      if (onComplete)
+        onComplete(false);
+      return;
+    }
+    audioData.waveform.makeCopyOf(audioData.originalWaveform);
+    // Nothing is rendered any more, so clear that flag first: the
+    // neutrality test below reads it, and with it cleared the test is a
+    // pure "do the edit parameters differ from the analysis" question.
+    for (auto &note : project->getNotes())
+      note.setRenderedEdit(false);
+    for (auto &note : project->getNotes()) {
+      const bool hasEdit = !note.isNeutralForOriginalWaveform() ||
+                           note.hasPendingTimingPositionChange();
+      note.setSynthDirty(hasEdit);
+    }
+    if (onComplete)
+      onComplete(true);
+    return;
+  }
+
   // PSOLA transforms the original waveform, so it needs neither the model nor
   // a loaded one, and it does not want the mel.
   const bool usePsola = synthesisEngine == SynthesisEngineType::Psola;

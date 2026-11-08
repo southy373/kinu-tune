@@ -316,6 +316,10 @@ private:
   // Engine change: the audio was rendered by the previous engine, so every
   // edited note is rendered again by the new one (Project::markEditedNotesDirty).
   void rerenderEditedNotes();
+  // VariAudio Changes Bypass: sets the flag on the current project and runs
+  // the render request that applies it (or, when lifting it, re-renders).
+  // Session-only; nothing is saved.
+  void setVariAudioChangesBypassed(bool bypassed);
   // Status line under the engine radios (ParameterPanel::setRenderStatus). Fed
   // from every place a render starts or finishes.
   void showRenderStatus(ParameterPanel::RenderStatus status);

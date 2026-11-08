@@ -39,6 +39,12 @@ public:
     void setSelectedNote(Note* note);
     void setSynthesisEngine(SynthesisEngineType type);
     SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
+    // VariAudio Changes Bypass (Rendering card, under the engine radios):
+    // while on, playback is the pristine original and resynthesis is
+    // suspended. Session-only - the owner (MainComponent) applies it to the
+    // current project; nothing here is saved.
+    void setChangesBypassed(bool bypassed);
+    bool isChangesBypassed() const { return changesBypassed; }
     // Whether the AI Resynthesis radio can be clicked (getAiResynthesisSupport).
     // A disabled option is never left selected: an AI choice is moved to
     // Classic and reported through onSynthesisEngineChanged, so it is saved.
@@ -87,6 +93,7 @@ public:
     std::function<void(double)> onUiBrightnessChanged;
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
     std::function<void(int)> onRenderDeviceChanged;
+    std::function<void(bool)> onChangesBypassChanged;
 
 private:
     void setupTextButton(juce::TextButton& button);
@@ -104,6 +111,7 @@ private:
     void setPitchReferenceInternal(int hz, bool notify);
     void refreshModeToggles();
     void refreshSynthesisToggles();
+    void setChangesBypassedInternal(bool bypassed, bool notify);
     void refreshVocoderToggleAvailability();
     void refreshRenderDeviceRow();
     void showRenderDeviceMenu();
@@ -192,6 +200,9 @@ private:
     juce::StringArray renderDeviceNames;
     int renderDeviceIndex = 0;
     bool renderDeviceRowVisible = false;
+
+    StyledToggleButton changesBypassToggle;
+    bool changesBypassed = false;
 
     juce::Label renderStatusLabel;
     RenderStatus renderStatus = RenderStatus::None;

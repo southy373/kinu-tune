@@ -28,6 +28,7 @@ constexpr int kSectionLabelHeight = 20;
 constexpr int kSectionLabelGap = kRowGap + 2;
 constexpr int kRadioRowHeight = 22;         // Rendering / Pitch mode toggles
 constexpr int kRenderStatusRowHeight = 18;  // "Last render: Classic"
+constexpr int kChangesBypassRowHeight = 22; // VariAudio Changes Bypass toggle
 constexpr int kTimelineModeRowHeight = 32;  // Beats | Time
 constexpr int kControlRowHeight = 26;       // label + control rows
 constexpr int kBrightnessRowHeight = 28;
@@ -35,7 +36,7 @@ constexpr int kLanguageRowHeight = 26;          // language selector row
 
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kRowGap +
-    kRenderStatusRowHeight + kInnerPadY;
+    kRenderStatusRowHeight + kRowGap + kChangesBypassRowHeight + kInnerPadY;
 
 // The inference device row is optional: it adds itself, leading gap included,
 // only while it is showing.
@@ -265,7 +266,8 @@ ParameterPanel::ParameterPanel()
     languageSelectorButton.addListener(this);
     selectedLanguageCode = Localization::getInstance().getPersistedLanguageCode();
 
-    for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle })
+    for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle,
+                          &changesBypassToggle })
     {
         addAndMakeVisible(toggle);
         toggle->setClickingTogglesState(true);
@@ -532,6 +534,9 @@ void ParameterPanel::resized()
     bounds.removeFromTop(kRowGap);
     renderStatusLabel.setBounds(bounds.removeFromTop(kRenderStatusRowHeight));
 
+    bounds.removeFromTop(kRowGap);
+    changesBypassToggle.setBounds(bounds.removeFromTop(kChangesBypassRowHeight));
+
     if (renderDeviceRowVisible)
     {
         bounds.removeFromTop(rowGap + 1);
@@ -716,6 +721,11 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         setTimelineSnapCycleInternal(timelineSnapCycleToggle.getToggleState(), true);
         return;
     }
+    if (button == &changesBypassToggle)
+    {
+        setChangesBypassedInternal(changesBypassToggle.getToggleState(), true);
+        return;
+    }
     if (button == &beatsTimelineToggle)
     {
         if (beatsTimelineToggle.getToggleState())
@@ -829,6 +839,8 @@ void ParameterPanel::refreshLocalisedText()
 
     renderDeviceLabel.setText(TR("param.device"), juce::dontSendNotification);
     refreshRenderStatusText();
+    changesBypassToggle.setButtonText(TR("param.changes_bypass"));
+    changesBypassToggle.setTooltip(TR("tooltip.changes_bypass"));
 
     referenceLabel.setText(TR("param.reference_a4"), juce::dontSendNotification);
     referenceSlider.setName(TR("param.pitch_reference"));
@@ -1053,6 +1065,20 @@ void ParameterPanel::setSynthesisEngineInternal(SynthesisEngineType type, bool n
 
     if (notify && onSynthesisEngineChanged)
         onSynthesisEngineChanged(synthesisEngine);
+}
+
+void ParameterPanel::setChangesBypassed(bool bypassed)
+{
+    setChangesBypassedInternal(bypassed, false);
+}
+
+void ParameterPanel::setChangesBypassedInternal(bool bypassed, bool notify)
+{
+    changesBypassed = bypassed;
+    changesBypassToggle.setToggleState(bypassed, juce::dontSendNotification);
+
+    if (notify && onChangesBypassChanged)
+        onChangesBypassChanged(changesBypassed);
 }
 
 void ParameterPanel::refreshSynthesisToggles()

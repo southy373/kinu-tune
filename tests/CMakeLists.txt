@@ -14,6 +14,7 @@
 
 set(PITCHNET_TEST_SOURCES
     AraRegionMergeTests.cpp
+    ChangesBypassTests.cpp
     AraRegionSliceTests.cpp
     FormantShiftTests.cpp
     HarmonyIntervalTests.cpp

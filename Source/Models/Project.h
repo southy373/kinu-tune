@@ -256,6 +256,15 @@ public:
     bool isModified() const { return modified; }
     void setModified(bool mod) { modified = mod; }
 
+    // VariAudio Changes Bypass: while set, synthesis is suspended and the
+    // composite waveform presented for playback is the pristine original,
+    // so the user can A/B their edits against the untouched audio. Edit
+    // data is never touched by the bypass. Runtime-only state: it is
+    // deliberately not written by ProjectSerializer and not restored from
+    // saved projects or plugin state.
+    bool isChangesBypassed() const { return changesBypassed; }
+    void setChangesBypassed(bool bypassed) { changesBypassed = bypassed; }
+
     // Loop range
     const LoopRange &getLoopRange() const { return loopRange; }
     void setLoopRange(double startSeconds, double endSeconds);
@@ -332,6 +341,7 @@ private:
     int f0DirtyEnd = -1;
 
     bool modified = false;
+    bool changesBypassed = false; // Runtime-only; never serialized.
 
     LoopRange loopRange;
     bool useProjectKey = true;

@@ -600,6 +600,23 @@ void EditorController::resynthesizeIncrementalAsync(
     return;
   }
 
+  if (project.isChangesBypassed())
+  {
+    // VariAudio Changes Bypass: skip the model loads and the dirty-range
+    // bookkeeping below. The synthesizer's bypass branch only restores the
+    // original waveform, and it must also run when nothing is dirty - the
+    // toggle itself has to take effect on an already-rendered project.
+    synth->setProject(&project);
+    synth->setSynthesisEngine(getSynthesisEngineType());
+    pendingRerun.store(false);
+    synth->synthesizeRegion(nullptr, [onComplete](bool success)
+                            {
+                              if (onComplete)
+                                onComplete(success);
+                            });
+    return;
+  }
+
   auto &audioData = project.getAudioData();
   if (audioData.melSpectrogram.empty() || audioData.f0.empty())
   {

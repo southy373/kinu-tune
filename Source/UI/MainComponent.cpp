@@ -853,6 +853,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
     // the previous engine would stay until the user happened to edit again.
     rerenderEditedNotes();
   };
+  parameterPanel.onChangesBypassChanged = [this](bool bypassed)
+  { setVariAudioChangesBypassed(bypassed); };
   // After the callback above is wired: where AI Resynthesis cannot run, this
   // moves a saved AI choice to Classic, and that has to be saved and handed to
   // the controller.
@@ -2897,6 +2899,24 @@ void MainComponent::resynthesizeIncremental()
       },
       pendingIncrementalResynth,
       isPluginMode());
+}
+
+void MainComponent::setVariAudioChangesBypassed(bool bypassed)
+{
+  auto *project = getProject();
+  if (!project)
+    return;
+
+  project->setChangesBypassed(bypassed);
+  // Either direction goes through the one render request: while bypassed
+  // the synthesizer short-circuits to the original waveform instead of
+  // resynthesizing, and lifting the bypass renders the notes the bypass
+  // left unrendered. The notifications follow an ordinary edit's, so the
+  // host and the standalone engine pick up the buffer that is now current.
+  resynthesizeIncremental();
+  notifyProjectDataChanged();
+  if (isPluginMode() && onPitchEditFinished)
+    onPitchEditFinished();
 }
 
 void MainComponent::rerenderEditedNotes()
