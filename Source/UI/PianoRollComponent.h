@@ -423,7 +423,7 @@ private:
   PitchUndoManager *undoManager = nullptr;
   // VariAudio look and smart controls (see NoteRenderer::setSegmentStyle).
   bool segmentStyle = true;
-  bool showAllSmartControls = true; // VariAudio "Show All", the default here
+  bool showAllSmartControls = false; // VariAudio default: frequent controls only
   // Inspector slider gesture in progress.
   bool inspectorEditActive = false;
   InspectorParam inspectorEditParam = InspectorParam::CorrectPitch;

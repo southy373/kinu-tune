@@ -342,7 +342,7 @@ void VariAudioInspector::refreshLocalisedText()
     smartControlsBox.clear(juce::dontSendNotification);
     smartControlsBox.addItem(TR("inspector.smart_default"), 1);
     smartControlsBox.addItem(TR("inspector.smart_all_short"), 2);
-    smartControlsBox.setSelectedId(smartId > 0 ? smartId : 2, juce::dontSendNotification);
+    smartControlsBox.setSelectedId(smartId > 0 ? smartId : 1, juce::dontSendNotification);
 
     const int snapId = snapModeBox.getSelectedId();
     snapModeBox.clear(juce::dontSendNotification);

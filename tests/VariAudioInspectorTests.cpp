@@ -624,7 +624,7 @@ int main()
               near(static_cast<float>(loopAfter.endSeconds), static_cast<float>(loopBefore.endSeconds)));
     }
 
-    // --- Defaults: Absolute snap, all smart controls, scale shown ---------
+    // --- Defaults: Absolute snap, default smart controls, scale shown ----
     {
         Project project;
         prepareAudio(project);
@@ -632,7 +632,7 @@ int main()
         CHECK(project.getScaleMode() != ScaleMode::Chromatic &&
               project.getScaleMode() != ScaleMode::None);
         PianoRollComponent roll;
-        CHECK(roll.getShowAllSmartControls());
+        CHECK(!roll.getShowAllSmartControls());
         CHECK(roll.getAbsoluteDragSnap());
 
         VariAudioInspector inspector;
@@ -648,7 +648,7 @@ int main()
                 snapBox = box;
         }
         CHECK(smartBox != nullptr && snapBox != nullptr);
-        CHECK(smartBox->getSelectedId() == 2); // all smart controls
+        CHECK(smartBox->getSelectedId() == 1); // default smart controls
         CHECK(snapBox->getSelectedId() == 1);  // Absolute
     }
 
