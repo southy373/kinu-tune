@@ -35,6 +35,7 @@ EditorController::EditorController(bool enableAudioDevice)
   rmvpePitchDetector = std::make_unique<RMVPEPitchDetector>();
   gameDetector = std::make_unique<GAMEDetector>();
   vocoder = std::make_unique<Vocoder>();
+  bigVganVocoder = std::make_unique<BigVGANVocoder>();
   incrementalSynth = std::make_unique<IncrementalSynthesizer>();
   playbackController = std::make_unique<PlaybackController>();
 
@@ -45,6 +46,7 @@ EditorController::EditorController(bool enableAudioDevice)
   gameModelDir = PlatformPaths::getModelSubDir("GAME", "encoder.onnx");
 
   incrementalSynth->setVocoder(vocoder.get());
+  incrementalSynth->setBigVganVocoder(bigVganVocoder.get());
   incrementalSynth->setSynthesisEngine(getSynthesisEngineType());
   if (audioEngine)
     playbackController->setAudioEngine(audioEngine.get());
@@ -83,6 +85,9 @@ void EditorController::requestShutdown()
     incrementalSynth->cancel();
   if (vocoder)
     vocoder->requestShutdown();
+
+  if (bigVganVocoder)
+    bigVganVocoder->requestShutdown();
 }
 
 EditorController::~EditorController()
@@ -560,6 +565,19 @@ void EditorController::setHostAudioAsync(
         }); });
 }
 
+bool EditorController::ensureBigVganLoaded()
+{
+  if (!bigVganVocoder)
+    return false;
+  if (bigVganVocoder->isLoaded())
+    return true;
+
+  auto modelPath = PlatformPaths::getBigVganModelFile();
+  if (!modelPath.existsAsFile())
+    return false;
+  return bigVganVocoder->loadModel(modelPath);
+}
+
 void EditorController::resynthesizeIncrementalAsync(
     Project &project,
     const std::function<void(const juce::String &)> &onProgress,
@@ -590,7 +608,7 @@ void EditorController::resynthesizeIncrementalAsync(
     return;
   }
   if (getSynthesisEngineType() == SynthesisEngineType::Vocoder &&
-      !vocoder->isLoaded())
+      !vocoder->isLoaded() && !ensureBigVganLoaded())
   {
     if (onProgress)
       onProgress(TR("progress.loading_vocoder"));
@@ -621,6 +639,7 @@ void EditorController::resynthesizeIncrementalAsync(
 
   synth->setProject(&project);
   synth->setVocoder(vocoder.get());
+  synth->setBigVganVocoder(bigVganVocoder.get());
   synth->setSynthesisEngine(getSynthesisEngineType());
   pendingRerun.store(false);
 
@@ -1003,33 +1022,53 @@ void EditorController::analyzeAudio(
   if (shuttingDown.load())
     return;
 
-  // The neural vocoder is optional: it is loaded only when AI Resynthesis is
-  // the selected engine, which the speech build never selects.
+  // The neural vocoder is optional: it is loaded only when AI Resynthesis
+  // is the selected engine. In the speech build that engine is BigVGAN when
+  // its model file is present; the NSF vocoder below stays as the fallback
+  // for builds that ship its model.
   if (getSynthesisEngineType() == SynthesisEngineType::Vocoder)
   {
     onProgress(0.375, TR("progress.loading_vocoder"));
-    auto modelPath = PlatformPaths::getVocoderModelFile();
 
-    if (!modelPath.exists() && !vocoder->isLoaded())
+    auto bigVganModelPath = PlatformPaths::getBigVganModelFile();
+    if (bigVganModelPath.existsAsFile())
     {
-      showMissingModelAndAbort(TR("error.vocoder_model_name"), modelPath);
-      return;
-    }
-
-    if (modelPath.exists() && !vocoder->isLoaded())
-    {
-      if (vocoder->loadModel(modelPath))
+      if (!ensureBigVganLoaded())
       {
-      }
-      else
-      {
-        juce::MessageManager::callAsync([modelPath]()
+        juce::MessageManager::callAsync([bigVganModelPath]()
                                         { juce::AlertWindow::showMessageBoxAsync(
                                               juce::AlertWindow::WarningIcon, TR("error.inference_failed"),
                                               TR("error.vocoder_load_failed") + "\n" +
-                                                  modelPath.getFullPathName() + "\n\n" +
+                                                  bigVganModelPath.getFullPathName() + "\n\n" +
                                                   TR("error.check_model_install")); });
         return;
+      }
+    }
+    else
+    {
+      auto modelPath = PlatformPaths::getVocoderModelFile();
+
+      if (!modelPath.exists() && !vocoder->isLoaded())
+      {
+        showMissingModelAndAbort(TR("error.vocoder_model_name"), modelPath);
+        return;
+      }
+
+      if (modelPath.exists() && !vocoder->isLoaded())
+      {
+        if (vocoder->loadModel(modelPath))
+        {
+        }
+        else
+        {
+          juce::MessageManager::callAsync([modelPath]()
+                                          { juce::AlertWindow::showMessageBoxAsync(
+                                                juce::AlertWindow::WarningIcon, TR("error.inference_failed"),
+                                                TR("error.vocoder_load_failed") + "\n" +
+                                                    modelPath.getFullPathName() + "\n\n" +
+                                                    TR("error.check_model_install")); });
+          return;
+        }
       }
     }
   }

@@ -6,6 +6,7 @@
 #include "FCPEPitchDetector.h"
 #include "PitchDetectorType.h"
 #include "RMVPEPitchDetector.h"
+#include "BigVGANVocoder.h"
 #include "GAMEDetector.h"
 #include "Synthesis/IncrementalSynthesizer.h"
 #include "SynthesisEngineType.h"
@@ -34,6 +35,7 @@ public:
 
   AudioEngine *getAudioEngine() const { return audioEngine.get(); }
   Vocoder *getVocoder() const { return vocoder.get(); }
+  BigVGANVocoder *getBigVganVocoder() const { return bigVganVocoder.get(); }
   IncrementalSynthesizer *getIncrementalSynth() const
   {
     return incrementalSynth.get();
@@ -112,12 +114,17 @@ public:
 
 private:
   GPUProvider getProviderFromDevice(const juce::String &device) const;
+  // Loads the BigVGAN model into bigVganVocoder when its file is present in
+  // the models folder. Returns true only when the model is loaded; AI
+  // Resynthesis falls back to the NSF vocoder when it returns false.
+  bool ensureBigVganLoaded();
   std::unique_ptr<Project> project;
   std::unique_ptr<AudioEngine> audioEngine;
   std::unique_ptr<FCPEPitchDetector> fcpePitchDetector;
   std::unique_ptr<RMVPEPitchDetector> rmvpePitchDetector;
   std::unique_ptr<GAMEDetector> gameDetector;
   std::unique_ptr<Vocoder> vocoder;
+  std::unique_ptr<BigVGANVocoder> bigVganVocoder;
   std::unique_ptr<IncrementalSynthesizer> incrementalSynth;
   std::unique_ptr<PlaybackController> playbackController;
 
