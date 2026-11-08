@@ -55,6 +55,23 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      # The BigVGAN model (~490 MB) is generated, never committed. The
+      # speech build offers AI Resynthesis only when the file is present,
+      # so CI produces it the same way a local developer would.
+      - name: Set up Python for BigVGAN model conversion
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install BigVGAN conversion dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0
+          python -m pip install onnx==1.23.2 onnxscript==0.7.2 onnxruntime==1.19.2 huggingface_hub==2.4.0
+
+      - name: Prepare BigVGAN model
+        run: python tools/convert_bigvgan.py
+
       # PITCHNET_BUILD_TESTS registers the tests; only ModelInferenceTests is
       # built and run here (the rest run on macOS).
       - name: Configure
