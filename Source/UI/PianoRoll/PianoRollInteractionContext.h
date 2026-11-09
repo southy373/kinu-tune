@@ -65,6 +65,7 @@ public:
   bool isCanvasPoint(const juce::MouseEvent &e) const;
 
   Note *findNoteAt(float x, float y);
+  Note *findContiguousNeighbour(const Note &note, bool next) const;
   std::vector<Note *> getSelectedNotes() const;
   void updatePitchToolHandlesFromSelection();
   void invalidateWaveformCache();

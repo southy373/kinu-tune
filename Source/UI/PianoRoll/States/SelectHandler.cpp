@@ -69,6 +69,34 @@ bool SelectHandler::mouseDown(const juce::MouseEvent &e, float worldX,
     }
   }
 
+  // Batch 2 (B4): Alt+press within a few pixels of a segment's start or
+  // end edge starts a boundary drag instead of a split. The press alone
+  // changes nothing; the drag reassigns frames across the boundary.
+  // (Smart-control handles were already claimed by the tool controller
+  // above, so an Alt+tilt on a corner handle still rotates, B6.)
+  if (e.mods.isAltDown() && !e.mods.isCommandDown() && !e.mods.isCtrlDown())
+  {
+    if (Note *edgeNote = owner_.findNoteAt(worldX, worldY))
+    {
+      if (!edgeNote->isRestOrDeleted() && owner_.coordMapper)
+      {
+        const float leftX = owner_.coordMapper->timeToX(
+            owner_.coordMapper->framesToSeconds(edgeNote->getStartFrame()));
+        const float rightX = owner_.coordMapper->timeToX(
+            owner_.coordMapper->framesToSeconds(edgeNote->getEndFrame()));
+        constexpr float kEdgeTolerance = 6.0f;
+        const bool onStart = std::abs(worldX - leftX) <= kEdgeTolerance;
+        const bool onEnd =
+            !onStart && std::abs(worldX - rightX) <= kEdgeTolerance;
+        if (onStart || onEnd)
+        {
+          beginBoundaryDrag(*edgeNote, onStart, worldX);
+          return true;
+        }
+      }
+    }
+  }
+
   // Check if clicking on a note
   Note *note = owner_.findNoteAt(worldX, worldY);
 
@@ -209,6 +237,26 @@ bool SelectHandler::mouseDrag(const juce::MouseEvent &e, float worldX,
       }
       return true;
     }
+  }
+
+  // Segment boundary drag (batch 2, B4): visual preview only; the real
+  // frames move on mouse-up.
+  if (isBoundaryDragging && boundaryNote)
+  {
+    const float pixelsPerSecond =
+        juce::jmax(1.0f, owner_.coordMapper->getPixelsPerSecond());
+    const int frameDelta = static_cast<int>(std::lround(
+        static_cast<double>(worldX - boundaryDragStartWorldX) /
+        pixelsPerSecond * SAMPLE_RATE / HOP_SIZE));
+    boundaryCurrentDelta =
+        juce::jlimit(boundaryMinDelta, boundaryMaxDelta, frameDelta);
+    applyBoundaryPreview();
+    if (shouldRepaint)
+    {
+      owner_.repaint();
+      owner_.lastDragRepaintTime = now;
+    }
+    return true;
   }
 
   // Delta scale drag
@@ -423,6 +471,69 @@ bool SelectHandler::mouseUp(const juce::MouseEvent &e, float worldX,
   auto *project = owner_.project;
   if (!project)
     return false;
+
+  // Segment boundary commit (batch 2, B4)
+  if (isBoundaryDragging)
+  {
+    Note *note = boundaryNote;
+    Note *neighbour = boundaryNeighbour;
+    const bool startEdge = boundaryIsStart;
+    const int delta = boundaryCurrentDelta;
+    const auto beforeStates = boundaryBeforeStates;
+    if (note)
+      note->clearTimingPreview();
+    if (neighbour)
+      neighbour->clearTimingPreview();
+    isBoundaryDragging = false;
+    boundaryNote = nullptr;
+    boundaryNeighbour = nullptr;
+    boundaryBeforeStates.clear();
+    boundaryCurrentDelta = 0;
+
+    if (delta != 0 && note)
+    {
+      auto afterStates = beforeStates;
+      for (auto &state : afterStates)
+      {
+        if (state.note == note)
+        {
+          if (startEdge)
+          {
+            state.startFrame += delta;
+            state.srcStartFrame += delta;
+          }
+          else
+          {
+            state.endFrame += delta;
+            state.srcEndFrame += delta;
+          }
+        }
+        else if (state.note == neighbour)
+        {
+          if (startEdge)
+          {
+            state.endFrame += delta;
+            state.srcEndFrame += delta;
+          }
+          else
+          {
+            state.startFrame += delta;
+            state.srcStartFrame += delta;
+          }
+        }
+      }
+      applyNoteBoundaryStates(*project, afterStates);
+      if (owner_.undoManager)
+        owner_.undoManager->addAction(std::make_unique<SegmentBoundaryAction>(
+            *project, beforeStates, afterStates));
+      if (owner_.onPitchEdited)
+        owner_.onPitchEdited();
+      if (owner_.onPitchEditFinished)
+        owner_.onPitchEditFinished();
+    }
+    owner_.repaint();
+    return true;
+  }
 
   // Pitch tool mouseUp
   if (owner_.pitchToolController &&
@@ -1137,7 +1248,8 @@ void SelectHandler::mouseDoubleClick(const juce::MouseEvent &e,
 
 bool SelectHandler::isActive() const
 {
-  return isDragging || isDeltaScaleDragging || isDeltaOffsetDragging ||
+  return isDragging || isBoundaryDragging || isDeltaScaleDragging ||
+         isDeltaOffsetDragging ||
          (owner_.pitchToolController &&
           owner_.pitchToolController->isDragging()) ||
          owner_.boxSelector->isSelecting() ||
@@ -1146,6 +1258,18 @@ bool SelectHandler::isActive() const
 
 void SelectHandler::cancel()
 {
+  if (isBoundaryDragging)
+  {
+    if (boundaryNote)
+      boundaryNote->clearTimingPreview();
+    if (boundaryNeighbour)
+      boundaryNeighbour->clearTimingPreview();
+    isBoundaryDragging = false;
+    boundaryNote = nullptr;
+    boundaryNeighbour = nullptr;
+    boundaryBeforeStates.clear();
+    boundaryCurrentDelta = 0;
+  }
   if (isDragging && draggedNote)
   {
     restoreDragBasePreview();
@@ -1208,6 +1332,116 @@ void SelectHandler::cancel()
 }
 
 // --- Private helpers ---
+
+void SelectHandler::beginBoundaryDrag(Note &note, bool startEdge, float worldX)
+{
+  auto *project = owner_.project;
+  boundaryNote = &note;
+  boundaryIsStart = startEdge;
+  // A neighbour that shares this exact boundary (output and source, same
+  // analysis chunk) gives its frames up; any other side is a gap of
+  // unowned frames, where only this note moves.
+  boundaryNeighbour = owner_.findContiguousNeighbour(note, !startEdge);
+  boundaryDragStartWorldX = worldX;
+  boundaryCurrentDelta = 0;
+  boundaryBeforeStates.clear();
+  boundaryBeforeStates.push_back(NoteBoundaryState::capture(note));
+  if (boundaryNeighbour)
+    boundaryBeforeStates.push_back(
+        NoteBoundaryState::capture(*boundaryNeighbour));
+
+  const int numFrames = project->getAudioData().getNumFrames();
+  if (startEdge)
+  {
+    const int boundary = note.getStartFrame();
+    const int srcBoundary = note.getSrcStartFrame();
+    // Shrinking this note: it must keep at least one frame on both
+    // timelines.
+    boundaryMaxDelta = std::min(note.getEndFrame() - 1 - boundary,
+                                note.getSrcEndFrame() - 1 - srcBoundary);
+    if (boundaryNeighbour)
+    {
+      // Growing into the neighbour: it must keep one frame too.
+      boundaryMinDelta =
+          std::max(boundaryNeighbour->getStartFrame() + 1 - boundary,
+                   boundaryNeighbour->getSrcStartFrame() + 1 - srcBoundary);
+    }
+    else
+    {
+      // Growing into the gap: stop at the nearest segment on either
+      // timeline (touching is allowed, overlapping is not).
+      int outputLimit = 0;
+      int sourceLimit = 0;
+      for (auto &other : project->getNotes())
+      {
+        if (&other == &note || other.isRest())
+          continue;
+        if (other.getEndFrame() <= boundary)
+          outputLimit = std::max(outputLimit, other.getEndFrame());
+        if (other.getSrcEndFrame() <= srcBoundary)
+          sourceLimit = std::max(sourceLimit, other.getSrcEndFrame());
+      }
+      boundaryMinDelta = std::max(outputLimit - boundary,
+                                  sourceLimit - srcBoundary);
+    }
+  }
+  else
+  {
+    const int boundary = note.getEndFrame();
+    const int srcBoundary = note.getSrcEndFrame();
+    boundaryMinDelta = std::max(note.getStartFrame() + 1 - boundary,
+                                note.getSrcStartFrame() + 1 - srcBoundary);
+    if (boundaryNeighbour)
+    {
+      boundaryMaxDelta =
+          std::min(boundaryNeighbour->getEndFrame() - 1 - boundary,
+                   boundaryNeighbour->getSrcEndFrame() - 1 - srcBoundary);
+    }
+    else
+    {
+      int outputLimit = numFrames;
+      int sourceLimit = numFrames;
+      for (auto &other : project->getNotes())
+      {
+        if (&other == &note || other.isRest())
+          continue;
+        if (other.getStartFrame() >= boundary)
+          outputLimit = std::min(outputLimit, other.getStartFrame());
+        if (other.getSrcStartFrame() >= srcBoundary)
+          sourceLimit = std::min(sourceLimit, other.getSrcStartFrame());
+      }
+      boundaryMaxDelta = std::min(outputLimit - boundary,
+                                  sourceLimit - srcBoundary);
+    }
+  }
+
+  isBoundaryDragging = true;
+  owner_.repaint();
+}
+
+void SelectHandler::applyBoundaryPreview()
+{
+  if (!boundaryNote || boundaryBeforeStates.empty())
+    return;
+
+  const auto &before = boundaryBeforeStates.front();
+  if (boundaryIsStart)
+  {
+    boundaryNote->setTimingPreviewStartFrame(
+        static_cast<float>(before.startFrame + boundaryCurrentDelta));
+    if (boundaryNeighbour && boundaryBeforeStates.size() > 1)
+      boundaryNeighbour->setTimingPreviewEndFrame(static_cast<float>(
+          boundaryBeforeStates[1].endFrame + boundaryCurrentDelta));
+  }
+  else
+  {
+    boundaryNote->setTimingPreviewEndFrame(
+        static_cast<float>(before.endFrame + boundaryCurrentDelta));
+    if (boundaryNeighbour && boundaryBeforeStates.size() > 1)
+      boundaryNeighbour->setTimingPreviewStartFrame(static_cast<float>(
+          boundaryBeforeStates[1].startFrame + boundaryCurrentDelta));
+  }
+}
 
 void SelectHandler::rebuildAndNotify()
 {

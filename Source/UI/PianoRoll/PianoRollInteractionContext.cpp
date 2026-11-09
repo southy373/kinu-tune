@@ -75,6 +75,12 @@ Note *PianoRollInteractionContext::findNoteAt(float x, float y)
   return component.findNoteAt(x, y);
 }
 
+Note *PianoRollInteractionContext::findContiguousNeighbour(const Note &note,
+                                                           bool next) const
+{
+  return component.findContiguousNeighbour(note, next);
+}
+
 std::vector<Note *> PianoRollInteractionContext::getSelectedNotes() const
 {
   return component.getSelectedNotes();

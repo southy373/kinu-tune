@@ -2,6 +2,7 @@
 
 #include "InteractionHandler.h"
 #include "../../../Undo/F0FrameEdit.h"
+#include "../../../Undo/SegmentBoundaryAction.h"
 
 #include <limits>
 #include <vector>
@@ -63,6 +64,10 @@ private:
   void applyDragBasePreview(float pitchOffsetSemitones);
   void restoreDragBasePreview();
 
+  // Segment boundary drag (batch 2, B4)
+  void beginBoundaryDrag(Note &note, bool startEdge, float worldX);
+  void applyBoundaryPreview();
+
   // Single note drag state
   bool isDragging = false;
   // Pitch drags start only after the pointer moves a few pixels.
@@ -90,6 +95,19 @@ private:
   int deltaScaleMaxFrame = std::numeric_limits<int>::min();
   std::vector<Note *> deltaScaleTargetNotes;
   std::vector<F0FrameEdit> deltaScaleEdits;
+
+  // Segment boundary drag state (batch 2, B4): Alt+drag on a segment edge
+  // moves the boundary between this segment and its neighbour (or the
+  // unowned gap next to it), reassigning output and source frames alike.
+  bool isBoundaryDragging = false;
+  Note *boundaryNote = nullptr;
+  Note *boundaryNeighbour = nullptr; // contiguous neighbour sharing the edge
+  bool boundaryIsStart = true;
+  float boundaryDragStartWorldX = 0.0f;
+  int boundaryMinDelta = 0;
+  int boundaryMaxDelta = 0;
+  int boundaryCurrentDelta = 0;
+  std::vector<NoteBoundaryState> boundaryBeforeStates;
 
   // Delta pitch offset drag state
   bool isDeltaOffsetDragging = false;
