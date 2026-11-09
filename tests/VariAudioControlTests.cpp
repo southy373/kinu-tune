@@ -137,8 +137,13 @@ int main()
         CHECK(near(editor.resolveDragOffset(1.4f, 60.3f, Kind::Relative), 1.0f));
         CHECK(near(editor.resolveDragOffset(1.4f, 60.3f, Kind::Absolute), 1.7f)); // lands on 62
         editor.setDragSnapMode(DragSnapMode::Scale);
-        // 60.3 + 0.9 = 61.2; the nearest C-major tone is D (62), 1.7 above.
-        CHECK(near(editor.resolveDragOffset(0.9f, 60.3f, Kind::Absolute), 1.7f));
+        // Batch 2 (B12): Absolute lands on semitones only, even in Scale
+        // mode - 60.3 + 0.9 = 61.2 snaps to 61, not to the C-major D.
+        CHECK(near(editor.resolveDragOffset(0.9f, 60.3f, Kind::Absolute), 0.7f));
+        // Scale snapping lives in the Relative path instead: the integer
+        // offsets landing in C major are 0 (C) and 2 (D); 0 is nearer
+        // the raw 0.9.
+        CHECK(near(editor.resolveDragOffset(0.9f, 60.3f, Kind::Relative), 0.0f));
     }
 
     // --- Modifier keys during a drag --------------------------------------
@@ -153,7 +158,11 @@ int main()
         roll.setAbsoluteDragSnap(true);
         CHECK(roll.resolveDragSnapKind({}) == Kind::Absolute);
         CHECK(roll.resolveDragSnapKind(juce::ModifierKeys::shiftModifier) == Kind::Off);
-        CHECK(roll.resolveDragSnapKind(juce::ModifierKeys::commandModifier) == Kind::Absolute);
+        // Batch 2 (Ctrl fine adjust): Ctrl during a drag - the command
+        // modifier on Windows - disables snapping for fine adjustment.
+        // It selected Absolute before this batch.
+        CHECK(roll.resolveDragSnapKind(juce::ModifierKeys::commandModifier) == Kind::Off);
+        CHECK(roll.resolveDragSnapKind(juce::ModifierKeys::ctrlModifier) == Kind::Off);
         CHECK(roll.resolveDragSnapKind(juce::ModifierKeys::altModifier) == Kind::Relative);
         roll.setSnapToSemitoneDrag(false);
         CHECK(roll.resolveDragSnapKind({}) == Kind::Off);
@@ -271,8 +280,9 @@ int main()
                                     juce::Time::getCurrentTime(), 1, dragged);
         };
 
-        // Empty canvas: the content follows the pointer, and the click clears
-        // the selection.
+        // Empty canvas: the click clears the selection, and since batch
+        // 2 (U4) the drag is box selection, Nuendo-style - the view
+        // stays put (panning lives on the middle-drag now).
         const juce::Point<float> start(viewX(400), canvasCentreY);
         const double scrollXBefore = roll.getScrollX();
         const double scrollYBefore = roll.getScrollY();
@@ -280,8 +290,8 @@ int main()
         CHECK(!project.getNotes()[0].isSelected());
         roll.mouseDrag(event(start + juce::Point<float>(-60.0f, -40.0f), start, true));
         roll.mouseUp(event(start + juce::Point<float>(-60.0f, -40.0f), start, true));
-        CHECK(near(static_cast<float>(roll.getScrollX() - scrollXBefore), 60.0f, 0.5f));
-        CHECK(near(static_cast<float>(roll.getScrollY() - scrollYBefore), 40.0f, 0.5f));
+        CHECK(near(static_cast<float>(roll.getScrollX() - scrollXBefore), 0.0f, 0.5f));
+        CHECK(near(static_cast<float>(roll.getScrollY() - scrollYBefore), 0.0f, 0.5f));
 
         // From the waveform the drag selects instead; the view stays put.
         const juce::Point<float> onWave(viewX(150), canvasCentreY);
