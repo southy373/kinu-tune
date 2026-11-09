@@ -373,6 +373,7 @@ private:
   bool isCanvasPoint(const juce::MouseEvent &e) const;
   bool isModifierZoomDrag(const juce::MouseEvent &e) const;
   void applyModifierZoomDrag(const juce::MouseEvent &e);
+  void applyAltZoomRectangle(const juce::MouseEvent &e);
   bool isModifierPanDrag(const juce::MouseEvent &e) const;
   void applyModifierPanDrag(const juce::MouseEvent &e);
   void updateMouseCursorForEditMode();
@@ -598,13 +599,16 @@ private:
   // Mouse drag throttling
   juce::int64 lastDragRepaintTime = 0;
   bool modifierZoomDragActive = false;
-  // Option/Alt-drag zooms vertically only (Cmd-drag zooms both axes).
+  // Cmd/Ctrl-drag zooms both axes (Option/Alt uses the zoom rectangle).
   bool modifierZoomVerticalOnly = false;
   juce::Point<float> modifierZoomLastPosition;
   bool modifierPanDragActive = false;
   juce::Point<float> modifierPanLastPosition;
   bool pianoKeyAuditionMouseDown = false;
-  bool middleButtonScrubActive = false;
+  // Batch 2 (B2): Option/Alt-drag draws a zoom rectangle on the canvas.
+  bool altZoomRectActive = false;
+  juce::Point<float> altZoomRectStart;
+  juce::Point<float> altZoomRectCurrent;
   bool shiftCtrlSeekActive = false;
   MainViewRegionPreviewList regionPreviews;
   bool trackViewMode = false;

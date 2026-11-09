@@ -669,6 +669,11 @@ void PianoRollComponent::paint(juce::Graphics &g)
     g.setColour(juce::Colours::white.withAlpha(0.05f)); g.fillRect(rect);
     g.setColour(juce::Colours::white.withAlpha(0.25f)); g.drawRect(rect);
   }
+  if (altZoomRectActive) {
+    const auto rect = juce::Rectangle<float>(altZoomRectStart, altZoomRectCurrent);
+    g.setColour(juce::Colours::white.withAlpha(0.05f)); g.fillRect(rect);
+    g.setColour(juce::Colours::white.withAlpha(0.25f)); g.drawRect(rect);
+  }
   // Draw timeline (above grid, scrolls horizontally)
   drawTimeline(g);
   drawLoopTimeline(g);
@@ -1751,6 +1756,76 @@ void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
     onZoomChanged(pixelsPerSecond);
 }
 
+void PianoRollComponent::applyAltZoomRectangle(const juce::MouseEvent &)
+{
+  // Batch 2 (B2): a rectangle of any real size zooms the view to it; a
+  // click-sized rectangle is an Alt-click and zooms out around the point.
+  const auto rect = juce::Rectangle<float>(altZoomRectStart, altZoomRectCurrent);
+  const float clickContentX = altZoomRectStart.x - pianoKeysWidth;
+  const float clickContentY = altZoomRectStart.y - headerHeight;
+
+  if (rect.getWidth() < 6.0f && rect.getHeight() < 6.0f)
+  {
+    constexpr float zoomOut = 0.6f;
+    const double timeAtMouse =
+        xToTime(clickContentX + static_cast<float>(scrollX));
+    setPixelsPerSecond(pixelsPerSecond * zoomOut);
+    scrollX = clampScrollX(timeAtMouse * pixelsPerSecond - clickContentX);
+    coordMapper->setScrollX(scrollX);
+    setPixelsPerSemitone(pixelsPerSemitone * zoomOut, clickContentY);
+    updateScrollBars();
+    if (onZoomChanged)
+      onZoomChanged(pixelsPerSecond);
+    repaint();
+    return;
+  }
+
+  if (rect.getWidth() >= 6.0f)
+  {
+    const int visibleWidth = getVisibleContentWidth();
+    const double startTime =
+        xToTime(rect.getX() - pianoKeysWidth + static_cast<float>(scrollX));
+    const double endTime =
+        xToTime(rect.getRight() - pianoKeysWidth + static_cast<float>(scrollX));
+    if (visibleWidth > 0 && endTime > startTime)
+    {
+      setPixelsPerSecond(
+          static_cast<float>(visibleWidth / (endTime - startTime)));
+      scrollX = clampScrollX(startTime * pixelsPerSecond);
+      coordMapper->setScrollX(scrollX);
+      updateScrollBars();
+      if (onZoomChanged)
+        onZoomChanged(pixelsPerSecond);
+    }
+  }
+
+  if (rect.getHeight() >= 6.0f)
+  {
+    const int visibleHeight = getVisibleContentHeight();
+    const float topMidi =
+        yToMidi(rect.getY() - headerHeight + static_cast<float>(scrollY));
+    const float bottomMidi =
+        yToMidi(rect.getBottom() - headerHeight + static_cast<float>(scrollY));
+    const float span = topMidi - bottomMidi;
+    if (visibleHeight > 0 && span > 0.0f)
+    {
+      setPixelsPerSemitone(static_cast<float>(visibleHeight) / span, 0.0f);
+      // setPixelsPerSemitone anchored the old top row; put the rectangle's
+      // top edge at the top of the view instead.
+      const double totalHeight =
+          (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+      const double maxScrollY =
+          std::max(0.0, totalHeight - static_cast<double>(visibleHeight));
+      scrollY = juce::jlimit(
+          0.0, maxScrollY,
+          (static_cast<double>(MAX_MIDI_NOTE) - topMidi) * pixelsPerSemitone);
+      coordMapper->setScrollY(scrollY);
+      updateScrollBars();
+    }
+  }
+  repaint();
+}
+
 bool PianoRollComponent::isModifierPanDrag(const juce::MouseEvent &e) const
 {
   return e.mods.isAltDown();
@@ -2036,17 +2111,15 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     return;
   }
 
-  // Middle-mouse scrub: click-and-drag anywhere in the timeline/canvas
-  // (ruler or note area) to move the playback cursor, mirroring Reaper's
-  // own middle-button scrub. Takes priority over every other gesture so
-  // held modifier keys never redirect it into zoom/pan.
+  // Middle-mouse drag pans the view (batch 2, U1; VariAudio). The
+  // playback-cursor scrub that used to live on the middle button moved to
+  // Shift+Ctrl+drag (below). Takes priority over every other gesture so
+  // held modifier keys never redirect it.
   if (e.mods.isMiddleButtonDown() && e.x >= pianoKeysWidth)
   {
-    middleButtonScrubActive = true;
-    double time = std::max(getTimelineStart(), xToTime(adjustedX));
-    setCursorTime(time);
-    if (onSeek)
-      onSeek(time);
+    modifierPanDragActive = true;
+    modifierPanLastPosition = e.position;
+    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
     return;
   }
 
@@ -2095,49 +2168,32 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
       }
     }
   }
-  // On a segment Alt is Relative snap / Alt-click split; anywhere else on the
-  // canvas Alt-drag zooms vertically.
+  // On a segment Alt is Relative snap / Alt-click split; anywhere else on
+  // the canvas Alt starts a zoom rectangle (batch 2, B2): drag to zoom into
+  // the rectangle, a plain Alt-click zooms out, Alt-double-click fits.
+  // Smart controls keep their own Alt behaviour (glue/split clicks, and
+  // Alt+tilt rotation, B6): several sit outside the segment's own bounds,
+  // so the note test alone would let the rectangle steal their drags.
   const bool altNoteDrag =
       editMode == EditMode::Select && findNoteAt(adjustedX, adjustedY) != nullptr;
-  if (isCanvasPoint(e) && isModifierPanDrag(e) && !altNoteDrag)
+  const bool altOnSmartControl =
+      pitchToolHandles && pitchToolHandles->hitTest(adjustedX, adjustedY) >= 0;
+  if (isCanvasPoint(e) && isModifierPanDrag(e) && !altNoteDrag &&
+      !altOnSmartControl)
   {
-    // Plain drag on empty canvas pans, so Option/Alt-drag zooms vertically
-    // (Cmd-drag keeps zooming both axes).
-    modifierZoomDragActive = true;
-    modifierZoomVerticalOnly = true;
-    modifierZoomLastPosition = e.position;
-    setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
-    return;
-  }
-
-  // A plain drag on empty canvas (not a segment, control or the waveform)
-  // pans the view with the pointer. A click there still clears the selection,
-  // as the zero-size box selection it replaces did; dragging from the
-  // waveform keeps box selection.
-  if (editMode == EditMode::Select && e.mods.isLeftButtonDown() &&
-      !e.mods.isAnyModifierKeyDown() && isCanvasPoint(e) &&
-      isEmptyCanvasPoint(e.position))
-  {
-    if (project)
-      project->deselectAllNotes();
-    if (trackViewMode && mouseDownTrackTargets)
-    {
-      // syncTrackPreviewSelection() reads trackGestureTargets.
-      trackGestureTargets = std::move(*mouseDownTrackTargets);
-      mouseDownTrackTargets.reset();
-      for (auto& target : trackGestureTargets)
-        if (!target.isValid || target.isValid())
-          for (auto& note : target.project->getNotes())
-            note.setSelected(false);
-      syncTrackPreviewSelection();
-    }
-    updatePitchToolHandlesFromSelection();
-    modifierPanDragActive = true;
-    modifierPanLastPosition = e.position;
-    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    altZoomRectActive = true;
+    altZoomRectStart = e.position;
+    altZoomRectCurrent = e.position;
+    setMouseCursor(juce::MouseCursor::CrosshairCursor);
     repaint();
     return;
   }
+
+  // Batch 2 (U4): a plain drag on empty canvas is a range (box) selection,
+  // Nuendo-style - it falls through to the mode handlers below (the track
+  // gesture in track view, SelectHandler's box selection otherwise), which
+  // also clear the selection on a plain click. Panning stays available on
+  // the middle button (above), the scroll bars and the wheel.
 
   // Handle timeline clicks - seek to position
   if (e.y < timelineHeight && e.x >= pianoKeysWidth)
@@ -2254,13 +2310,10 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
     return;
   if (swallowGestureUntilMouseUp)
     return;
-  if (middleButtonScrubActive)
+  if (altZoomRectActive)
   {
-    float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
-    double time = std::max(getTimelineStart(), xToTime(adjustedX));
-    setCursorTime(time);
-    if (onSeek)
-      onSeek(time);
+    altZoomRectCurrent = e.position;
+    repaint();
     return;
   }
 
@@ -2327,9 +2380,16 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
     swallowGestureUntilMouseUp = false;
     return;
   }
-  if (middleButtonScrubActive)
+  if (altZoomRectActive)
   {
-    middleButtonScrubActive = false;
+    altZoomRectActive = false;
+    updateMouseCursorForEditMode();
+    // The second half of an Alt double-click lands here too; that gesture
+    // already fitted the view in mouseDoubleClick, so it must not also
+    // read as an Alt-click zoom-out.
+    if (e.getNumberOfClicks() < 2)
+      applyAltZoomRectangle(e);
+    repaint();
     return;
   }
 
@@ -2394,7 +2454,7 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   if (!showZoomCursor && isCanvasPoint(e) && e.mods.isAltDown() &&
       !altControlsNoteSnap)
   {
-    setMouseCursor(juce::MouseCursor::UpDownResizeCursor); // Alt-drag: vertical zoom
+    setMouseCursor(juce::MouseCursor::CrosshairCursor); // Alt-drag: zoom rectangle
     return;
   }
 
@@ -3253,6 +3313,15 @@ PianoRollComponent::resolveDragSnapKind(const juce::ModifierKeys &mods) const
 {
   using Kind = PitchEditor::DragSnapKind;
   if (mods.isShiftDown())
+    return Kind::Off;
+  // Batch 2: holding Ctrl during a segment drag is the fine adjust - no
+  // snapping while it is held. The kind is resolved per drag event, so
+  // pressing or releasing Ctrl mid-drag switches live. On Windows Ctrl
+  // is also the command modifier, so this must be tested before the
+  // Command branch (macOS keeps Cmd = Absolute). A Ctrl+click never
+  // starts a pitch drag (it edits the selection), and Shift+Ctrl is the
+  // seek gesture, so this only affects drags already under way.
+  if (mods.isCtrlDown())
     return Kind::Off;
   if (mods.isCommandDown())
     return Kind::Absolute;
