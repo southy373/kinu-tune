@@ -1205,7 +1205,11 @@ void segmentSpeechNotes(Project &targetProject,
 
   audioData.segmentChunkRanges.emplace_back(0, f0Size);
 
-  constexpr int kBridgeGap = 3;        // F0 drop-outs up to ~35 ms stay in one run
+  // Batch 3: widened from 3 - speech drop-outs up to ~70 ms stay in one
+  // run, so the pitch line has fewer breaks for the renderer to splice
+  // (the breaks are what warble under a length change). The >= 9 dB
+  // energy-dip syllable cut below still splits runs at real dips.
+  constexpr int kBridgeGap = 6;        // F0 drop-outs up to ~70 ms stay in one run
   constexpr int kMinVoicedFrames = 3;  // ~35 ms of voiced F0 is enough for a note
   constexpr int kMinSegmentFrames = 6; // syllable cut keeps >= ~70 ms on each side
   constexpr float kDipDb = 9.0f;       // energy dip needed for a syllable cut

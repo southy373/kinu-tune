@@ -226,6 +226,72 @@ void applyNoteTimingToSourceFrames(const Project &project, int rangeStart,
   }
 }
 
+// Batch 3: gap bridging for the timing maps. A length % (or any timing
+// edit) retimes every note, but the frames BETWEEN notes keep the
+// identity map, so the source position jumps at every gap edge - under
+// time scaling the joins read the wrong source audio and the pitch
+// breaks warble. The helpers below mark which frames the timing pass
+// actually wrote, then interpolate the source map across the gaps so
+// it is continuous everywhere.
+std::vector<char> computeTimingCoveredMask(const Project &project,
+                                           int rangeStart, int rangeEnd) {
+  std::vector<char> covered(
+      static_cast<size_t>(std::max(0, rangeEnd - rangeStart)), 0);
+  const auto mark = [&](int start, int end) {
+    start = std::max(start, rangeStart);
+    end = std::min(end, rangeEnd);
+    for (int frame = start; frame < end; ++frame)
+      covered[static_cast<size_t>(frame - rangeStart)] = 1;
+  };
+  for (const auto &note : project.getNotes()) {
+    for (const auto &span : getPreservedTimingSpans(project, note))
+      mark(span.destinationStart, span.destinationEnd);
+    if (!note.isRest() && hasTimingEdit(note))
+      mark(note.getStartFrame(), note.getEndFrame());
+  }
+  return covered;
+}
+
+void bridgeSourceFrameMapGaps(std::vector<double> &map,
+                              const std::vector<char> &covered) {
+  const int count = static_cast<int>(map.size());
+  int i = 0;
+  while (i < count) {
+    if (covered[static_cast<size_t>(i)]) {
+      ++i;
+      continue;
+    }
+    const int runStart = i;
+    while (i < count && !covered[static_cast<size_t>(i)])
+      ++i;
+    const int runEnd = i; // exclusive
+    const bool hasLeft = runStart > 0;
+    const bool hasRight = runEnd < count;
+    if (hasLeft && hasRight) {
+      const double leftValue = map[static_cast<size_t>(runStart - 1)];
+      const double rightValue = map[static_cast<size_t>(runEnd)];
+      const int span = runEnd - runStart + 1;
+      for (int f = runStart; f < runEnd; ++f)
+        map[static_cast<size_t>(f)] =
+            leftValue + (rightValue - leftValue) *
+                            static_cast<double>(f - runStart + 1) /
+                            static_cast<double>(span);
+    } else if (hasRight) {
+      const double rightValue = map[static_cast<size_t>(runEnd)];
+      for (int f = runStart; f < runEnd; ++f)
+        map[static_cast<size_t>(f)] =
+            rightValue - static_cast<double>(runEnd - f);
+    } else if (hasLeft) {
+      const double leftValue = map[static_cast<size_t>(runStart - 1)];
+      for (int f = runStart; f < runEnd; ++f)
+        map[static_cast<size_t>(f)] =
+            leftValue + static_cast<double>(f - runStart + 1);
+    }
+    // No anchor on either side: the whole range is uncovered (no timing
+    // edits at all) and the identity map is already continuous.
+  }
+}
+
 float interpolateF0(const std::vector<float> &f0, double frame) {
   if (f0.empty())
     return 0.0f;
@@ -757,6 +823,11 @@ IncrementalSynthesizer::buildSourceFrameMap(int startFrame, int endFrame) const 
         static_cast<double>(frame);
 
   applyNoteTimingToSourceFrames(*project, startFrame, endFrame, sourceFrameMap);
+  // Continuous across the gaps between retimed notes (see the helpers
+  // above); with no timing edits the map is the identity throughout and
+  // bridging changes nothing.
+  bridgeSourceFrameMapGaps(
+      sourceFrameMap, computeTimingCoveredMask(*project, startFrame, endFrame));
   return sourceFrameMap;
 }
 
@@ -1333,6 +1404,19 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 std::min(frame, melFrames - 1))];
     }
     applyNoteTimingToMel(*project, startFrame, endFrame, melRange);
+    // Batch 3: bridge the mel across the gaps between retimed notes
+    // with the same (bridged) source map the PSOLA path reads, so the
+    // NSF vocoder does not jump between unrelated source frames at a
+    // join either.
+    if (!melRange.empty()) {
+      const auto gapMap = buildSourceFrameMap(startFrame, endFrame);
+      const auto covered =
+          computeTimingCoveredMask(*project, startFrame, endFrame);
+      for (size_t i = 0; i < melRange.size() && i < gapMap.size(); ++i)
+        if (!covered[i])
+          melRange[i] =
+              interpolateMelFrame(audioData.melSpectrogram, gapMap[i]);
+    }
 
     if (melRange.empty()) {
       if (onComplete)
