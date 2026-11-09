@@ -6,26 +6,26 @@
  * Platform-specific path utilities.
  *
  * macOS:
- *   - Models: ~/Library/Application Support/Keinoaza/Kinu Tune/models/, then
- *             /Library/Application Support/Keinoaza/Kinu Tune/models/
- *   - Logs: ~/Library/Logs/Kinu Tune/
- *   - Config: ~/Library/Kinu Tune/
+ *   - Models: ~/Library/Application Support/Keinoaza/Pure Tune/models/, then
+ *             /Library/Application Support/Keinoaza/Pure Tune/models/
+ *   - Logs: ~/Library/Logs/Pure Tune/
+ *   - Config: ~/Library/Pure Tune/
  *
  * Windows:
- *   - Models: %APPDATA%/Keinoaza/Kinu Tune/models/, then
- *             %PROGRAMDATA%/Keinoaza/Kinu Tune/models/
- *   - Logs: %APPDATA%/Kinu Tune/Logs/
- *   - Config: %APPDATA%/Kinu Tune/
+ *   - Models: %APPDATA%/Keinoaza/Pure Tune/models/, then
+ *             %PROGRAMDATA%/Keinoaza/Pure Tune/models/
+ *   - Logs: %APPDATA%/Pure Tune/Logs/
+ *   - Config: %APPDATA%/Pure Tune/
  *
  * Linux:
  *   - Models: <exe_dir>/models/
- *   - Logs: ~/.config/Kinu Tune/logs/
- *   - Config: ~/.config/Kinu Tune/
+ *   - Logs: ~/.config/Pure Tune/logs/
+ *   - Config: ~/.config/Pure Tune/
  */
 namespace PlatformPaths
 {
     inline constexpr const char *kVendorFolderName = "Keinoaza";
-    inline constexpr const char *kProductFolderName = "Kinu Tune";
+    inline constexpr const char *kProductFolderName = "Pure Tune";
 
     inline juce::File getProjectResourcesDirectory()
     {
@@ -51,7 +51,7 @@ namespace PlatformPaths
 
         return {};
 #else
-        // Kinu Tune keeps its resources apart from PitchNet's. The per-user
+        // Pure Tune keeps its resources apart from PitchNet's. The per-user
         // folder comes first so a local install needs no administrator rights.
         auto resourcesUnder = [](juce::File::SpecialLocationType location)
         {
@@ -237,17 +237,17 @@ namespace PlatformPaths
     inline juce::File getLogsDirectory()
     {
 #if JUCE_MAC
-        // macOS: ~/Library/Logs/Kinu Tune/
+        // macOS: ~/Library/Logs/Pure Tune/
         return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
             .getChildFile("Library/Logs")
             .getChildFile(kProductFolderName);
 #elif JUCE_WINDOWS
-        // Windows: %APPDATA%/Kinu Tune/Logs/
+        // Windows: %APPDATA%/Pure Tune/Logs/
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
             .getChildFile(kProductFolderName)
             .getChildFile("Logs");
 #else
-        // Linux: ~/.config/Kinu Tune/logs/
+        // Linux: ~/.config/Pure Tune/logs/
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
             .getChildFile(kProductFolderName)
             .getChildFile("logs");
