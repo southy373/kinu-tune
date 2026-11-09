@@ -87,6 +87,8 @@ inline void applyNoteBoundaryStates(
         note.markSynthDirty();
     }
 
+    // A boundary move outside the length-% path re-bases the length scale.
+    project.invalidateLengthBase();
     PitchCurveProcessor::rebuildBaseFromNotes(project);
     if (dirtyStart <= dirtyEnd)
     {

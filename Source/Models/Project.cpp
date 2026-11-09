@@ -3,6 +3,7 @@
 #include "../Utils/PitchCurveProcessor.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace
 {
@@ -414,6 +415,71 @@ void Project::setDragSnapMode(DragSnapMode mode)
 
     macroParameters->dragSnapMode = mode;
     modified = true;
+}
+
+void Project::ensureLengthBase()
+{
+    if (lengthBaseValid && lengthBaseFrames.size() == notes.size())
+        return;
+
+    // The base is the frame layout at 100%. When the current percent is
+    // not 100 the frames on the notes are already scaled, so divide the
+    // scale back out (this is where a sub-frame of drift can enter after
+    // timing edits made at a non-100 percent; see MODIFICATIONS.md).
+    const double k = static_cast<double>(macroParameters->lengthPercent) / 100.0;
+    lengthBaseFrames.clear();
+    lengthBaseFrames.reserve(notes.size());
+    for (const auto &note : notes)
+    {
+        int start = note.getStartFrame();
+        int end = note.getEndFrame();
+        if (std::abs(k - 1.0) > 1.0e-9)
+        {
+            start = static_cast<int>(std::lround(start / k));
+            end = static_cast<int>(std::lround(end / k));
+        }
+        lengthBaseFrames.emplace_back(start, end);
+    }
+    lengthBaseValid = true;
+}
+
+void Project::scaleNotesForLengthPercent(float percent)
+{
+    const float clamped = juce::jlimit(50.0f, 200.0f, percent);
+    ensureLengthBase();
+
+    const double k = static_cast<double>(clamped) / 100.0;
+    int dirtyStart = std::numeric_limits<int>::max();
+    int dirtyEnd = std::numeric_limits<int>::min();
+    for (size_t i = 0; i < notes.size(); ++i)
+    {
+        auto &note = notes[i];
+        const int start =
+            static_cast<int>(std::lround(lengthBaseFrames[i].first * k));
+        const int end = std::max(
+            start + 1,
+            static_cast<int>(std::lround(lengthBaseFrames[i].second * k)));
+        if (note.getStartFrame() != start || note.getEndFrame() != end)
+        {
+            dirtyStart = std::min({dirtyStart, note.getStartFrame(), start});
+            dirtyEnd = std::max({dirtyEnd, note.getEndFrame(), end});
+            note.setStartFrame(start);
+            note.setEndFrame(end);
+        }
+        note.markDirty();
+        note.markSynthDirty();
+    }
+
+    macroParameters->lengthPercent = clamped;
+    modified = true;
+
+    PitchCurveProcessor::rebuildBaseFromNotes(*this);
+    if (dirtyStart <= dirtyEnd)
+    {
+        const int frameCount = getAudioData().getNumFrames();
+        setF0DirtyRange(std::max(0, dirtyStart - 24),
+                        std::min(frameCount, dirtyEnd + 24));
+    }
 }
 
 void Project::setTimelineDisplayMode(TimelineDisplayMode mode)

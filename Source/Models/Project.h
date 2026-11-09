@@ -148,6 +148,12 @@ struct MacroParameters
     double timelineTempoBpm = 120.0;
     TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
     bool timelineSnapCycle = false;
+    // Batch 2 (U7): project-wide percent adjustments. pitchPercent scales
+    // the F0 of every voiced frame at synthesis time; lengthPercent scales
+    // every note's output frames (see Project::scaleNotesForLengthPercent).
+    // Both default to 100 (neutral) and are saved with the project.
+    float pitchPercent = 100.0f;
+    float lengthPercent = 100.0f;
 };
 
 /**
@@ -215,6 +221,48 @@ public:
             modified = true;
         }
     }
+
+    // Batch 2 (U7): project-wide pitch % (50-200, default 100). Applied as
+    // one F0 ratio at synthesis time, so it is non-destructive: setting it
+    // back to 100 restores the original rendering exactly.
+    float getPitchPercent() const { return macroParameters->pitchPercent; }
+    void setPitchPercent(float percent)
+    {
+        const float normalized = juce::jlimit(50.0f, 200.0f, percent);
+        if (std::abs(macroParameters->pitchPercent - normalized) > 0.0001f)
+        {
+            macroParameters->pitchPercent = normalized;
+            modified = true;
+        }
+    }
+
+    // Batch 2 (U7): project-wide length % (50-200, default 100). The plain
+    // setter only stores the value (deserialization, undo bookkeeping);
+    // scaleNotesForLengthPercent is the entry point that also moves the
+    // notes' output frames.
+    float getLengthPercent() const { return macroParameters->lengthPercent; }
+    void setLengthPercent(float percent)
+    {
+        const float normalized = juce::jlimit(50.0f, 200.0f, percent);
+        if (std::abs(macroParameters->lengthPercent - normalized) > 0.0001f)
+        {
+            macroParameters->lengthPercent = normalized;
+            modified = true;
+        }
+    }
+
+    // Scale every note's output start/end frames by percent/100, computed
+    // from a runtime base table so repeated changes do not accumulate
+    // rounding: at 100 the frames are exactly the base frames. Source
+    // frames are not touched (each note time-stretches its own source
+    // slice). Marks notes dirty and rebuilds the base pitch, like a
+    // timing edit over the whole project.
+    void scaleNotesForLengthPercent(float percent);
+
+    // Timing edits made outside the length-% path (timing drags, boundary
+    // drags, undo/redo of them) invalidate the length base table; the next
+    // scale re-derives it from the current frames at the current percent.
+    void invalidateLengthBase() { lengthBaseValid = false; }
 
     // Get adjusted F0 with all modifications applied
     std::vector<float> getAdjustedF0() const;
@@ -335,6 +383,12 @@ private:
     float formantShift = 0.0f;
     float volume = 0.0f; // dB
     float pitchCenter = 0.0f;
+
+    // Runtime-only base frames for length-% scaling (never serialized):
+    // the notes' output frames at 100%, re-derived whenever invalidated.
+    std::vector<std::pair<int, int>> lengthBaseFrames;
+    bool lengthBaseValid = false;
+    void ensureLengthBase();
 
     // F0 direct edit dirty range
     int f0DirtyStart = -1;

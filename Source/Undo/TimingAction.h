@@ -81,6 +81,8 @@ inline void applyNoteTimingStates(Project& project,
         state.note->markSynthDirty();
     }
 
+    // A timing edit outside the length-% path re-bases the length scale.
+    project.invalidateLengthBase();
     PitchCurveProcessor::rebuildBaseFromNotes(project);
     if (dirtyStart <= dirtyEnd)
     {

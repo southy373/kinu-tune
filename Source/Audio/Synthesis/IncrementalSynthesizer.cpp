@@ -1231,6 +1231,16 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
   std::vector<float> adjustedF0Range =
       project->getAdjustedF0ForRange(startFrame, endFrame);
+  // Batch 2 (U7): the project pitch % is one ratio over every voiced F0
+  // (unvoiced frames are 0 Hz and stay 0). It is applied BEFORE the
+  // preserved-timing pass, which restores preserved (unpitched) spans
+  // from the original F0, so those spans stay at ratio 1. Rendering is
+  // always derived from the original audio and pitch curve, so 100%
+  // reproduces the unscaled render exactly.
+  const float pitchRatio = project->getPitchPercent() / 100.0f;
+  if (std::abs(pitchRatio - 1.0f) > 1.0e-6f)
+    for (auto &f : adjustedF0Range)
+      f *= pitchRatio;
   applyPreservedTimingToF0(*project, startFrame, endFrame, adjustedF0Range);
 
   if (adjustedF0Range.empty()) {

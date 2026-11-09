@@ -18,6 +18,7 @@ set(PITCHNET_TEST_SOURCES
     PitchToolOperationsTests.cpp
     AraRegionSliceTests.cpp
     FormantShiftTests.cpp
+    GlobalPercentTests.cpp
     HarmonyIntervalTests.cpp
     HostSyncTempoTests.cpp
     NoteGainCurveTests.cpp

@@ -188,6 +188,8 @@ juce::var ProjectSerializer::toJson(const Project& project,
     obj->setProperty("formantShift", project.getFormantShift());
     obj->setProperty("volume", project.getVolume());
     obj->setProperty("pitchCenter", project.getPitchCenter());
+    obj->setProperty("pitchPercent", project.getPitchPercent());
+    obj->setProperty("lengthPercent", project.getLengthPercent());
     obj->setProperty("scaleMode", static_cast<int>(project.getScaleMode()));
     obj->setProperty("preferredScaleMode",
                      static_cast<int>(project.getRegionKeyMode()));
@@ -316,6 +318,8 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
     project.setFormantShift(static_cast<float>(json.getProperty("formantShift", 0.0)));
     project.setVolume(static_cast<float>(json.getProperty("volume", 0.0)));
     project.setPitchCenter(static_cast<float>(json.getProperty("pitchCenter", 0.0)));
+    project.setPitchPercent(static_cast<float>(json.getProperty("pitchPercent", 100.0)));
+    project.setLengthPercent(static_cast<float>(json.getProperty("lengthPercent", 100.0)));
     {
         const int scaleModeValue = static_cast<int>(json.getProperty(
             "scaleMode", static_cast<int>(ScaleMode::Chromatic)));
