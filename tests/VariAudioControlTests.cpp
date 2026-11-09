@@ -88,10 +88,15 @@ int main()
         CHECK(findHandle(handles, Type::GlueRight) == nullptr);
         CHECK(findHandle(handles, Type::GlueLeft)->bounds.getRight() <= left);
 
-        // "Show all" adds tilt, formant and volume.
+        // "Show all" adds tilt, formant and volume - plus, since batch
+        // 2, the tilt anchor (B5) and the straighten-range pair (B7);
+        // the split control (B8) is in the default set counted above.
         handles.setOptions({true, true, true});
         handles.updateHandles({&note}, mapper);
-        CHECK(handles.getHandles().size() == 8);
+        CHECK(handles.getHandles().size() == 12);
+        CHECK(findHandle(handles, Type::TiltAnchor) != nullptr);
+        CHECK(findHandle(handles, Type::StraightenRangeLeft) != nullptr);
+        CHECK(findHandle(handles, Type::StraightenRangeRight) != nullptr);
         CHECK(findHandle(handles, Type::TiltLeft)->bounds.getBottom() <= top);
         CHECK(findHandle(handles, Type::Formant)->bounds.getBottom() <= bottom);
         CHECK(findHandle(handles, Type::Amplitude)->bounds.getRight() <= right);
@@ -99,7 +104,11 @@ int main()
 
         // The segment body never belongs to the control layout (regression:
         // track gestures and Shift-click were swallowed on hovered segments).
-        CHECK(!handles.containsLayoutPoint((left + right) * 0.5f, top + 12.0f));
+        // Probed off-centre: the split control (B8) sits on the
+        // bottom-centre edge, so the body's centre column is its layout
+        // footprint by design, like the corner controls.
+        CHECK(!handles.containsLayoutPoint(
+            left + (right - left) * 0.25f, top + 12.0f));
         CHECK(handles.containsLayoutPoint((left + right) * 0.5f, top - 7.5f));
 
         // Like VariAudio, controls appear only once the segment is zoomed in.
