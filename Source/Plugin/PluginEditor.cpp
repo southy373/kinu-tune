@@ -225,12 +225,6 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
   mainView->getComponent()->setMouseClickGrabsKeyboardFocus(true);
   audioProcessor.setMainComponent(mainView.get());
 
-  // Batch 2 (insert prototype): created hidden; setupNonARAMode shows
-  // it in place of the main editor.
-  insertView = std::make_unique<InsertEffectView>(
-      audioProcessor.getAPVTS(), PitchNetAudioProcessor::PARAM_INSERT_PITCH_PERCENT,
-      PitchNetAudioProcessor::PARAM_INSERT_FORMANT);
-  addChildComponent(*insertView);
   addMouseListener(this, true);
 
 #if JucePlugin_Enable_ARA
@@ -303,7 +297,6 @@ PitchNetAudioProcessorEditor::~PitchNetAudioProcessorEditor() {
   // releasing the final shared UI resources. This is especially important for
   // DirectWrite memory fonts when a Windows host unloads the plugin DLL.
   mainView.reset();
-  insertView.reset();
   shutdownUiResources();
 }
 
@@ -1453,16 +1446,6 @@ void PitchNetAudioProcessorEditor::onNewSelection(
 #endif
 
 void PitchNetAudioProcessorEditor::setupNonARAMode() {
-  // Batch 2 (insert prototype): without an ARA document the plugin is
-  // the realtime streaming insert effect, so the editor shows the
-  // two-fader insert view instead of the capture/edit UI. The main
-  // view stays alive (state, callbacks) but hidden.
-  if (insertView) {
-    mainView->getComponent()->setVisible(false);
-    insertView->setVisible(true);
-    insertView->setBounds(getLocalBounds());
-  }
-
   // Without ARA the plugin cannot drive the host transport, so play / stop /
   // cycle and cycle-range editing are disabled - capture is the only transport
   // action available here.
@@ -1618,10 +1601,7 @@ void PitchNetAudioProcessorEditor::paint(juce::Graphics &) {
 
 void PitchNetAudioProcessorEditor::resized() {
   audioProcessor.setLastEditorSize(getWidth(), getHeight());
-  if (insertView && insertView->isVisible())
-    insertView->setBounds(getLocalBounds());
-  else
-    mainView->getComponent()->setBounds(getLocalBounds());
+  mainView->getComponent()->setBounds(getLocalBounds());
   requestMainViewKeyboardFocusAsync();
 }
 

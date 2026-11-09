@@ -9,7 +9,6 @@
 #include <map>
 #include <memory>
 #include <vector>
-#include "InsertEffectView.h"
 #include "PluginProcessor.h"
 
 class PitchNetAudioProcessorEditor : public juce::AudioProcessorEditor
@@ -95,7 +94,6 @@ private:
     std::unique_ptr<IMainView> mainView;
     // Batch 2 (insert prototype): two-fader view shown instead of the
     // main editor whenever no ARA document is bound.
-    std::unique_ptr<InsertEffectView> insertView;
     double lastSyncedHostPlayheadSeconds = 0.0;
     bool lastSyncedHostPlayState = false;
     bool hasSyncedHostPlayhead = false;

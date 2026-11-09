@@ -216,16 +216,6 @@ PitchNetAudioProcessor::createParameterLayout() {
       juce::ParameterID{PARAM_FORMANT_SHIFT, 1}, "Formant Shift",
       juce::NormalisableRange<float>(-12.0f, 12.0f, 0.01f), 0.0f));
 
-  // Batch 2 (insert prototype): streaming insert pitch, in percent.
-  params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{PARAM_INSERT_PITCH_PERCENT, 1}, "Insert Pitch %",
-      juce::NormalisableRange<float>(50.0f, 200.0f, 0.1f), 100.0f));
-
-  // Batch 2 (insert prototype): streaming insert formant, in semitones.
-  params.push_back(std::make_unique<juce::AudioParameterFloat>(
-      juce::ParameterID{PARAM_INSERT_FORMANT, 1}, "Insert Formant",
-      juce::NormalisableRange<float>(-12.0f, 12.0f, 0.01f), 0.0f));
-
   return {params.begin(), params.end()};
 }
 
@@ -258,9 +248,6 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
   dryWetParamValue = apvts.getRawParameterValue(PARAM_DRY_WET);
   pitchOffsetParamValue = apvts.getRawParameterValue(PARAM_PITCH_OFFSET);
   formantShiftParamValue = apvts.getRawParameterValue(PARAM_FORMANT_SHIFT);
-  insertPitchPercentParamValue =
-      apvts.getRawParameterValue(PARAM_INSERT_PITCH_PERCENT);
-  insertFormantParamValue = apvts.getRawParameterValue(PARAM_INSERT_FORMANT);
   {
     // Same file the editor reads, so a render that runs before the editor is
     // opened (restoring a saved project) uses the engine the editor will show.
@@ -322,20 +309,10 @@ void PitchNetAudioProcessor::prepareToPlay(double sampleRate,
   hostSampleRate = sampleRate;
   realtimeProcessor.prepareToPlay(sampleRate, samplesPerBlock);
 
-  // Batch 2 (insert prototype): prepare the streaming shifter. The
-  // ARA path keeps zero latency (pre-computed buffers: output at time
-  // T corresponds to input at time T); with no ARA document bound the
-  // plugin is the streaming insert effect and reports the shifter's
-  // fixed latency. setAraDocumentController refreshes this on binding.
-  insertShifter.prepare(sampleRate,
-                        juce::jmax(1, getMainBusNumInputChannels()));
-#if JucePlugin_Enable_ARA
-  setLatencySamples(araDocumentController != nullptr
-                        ? 0
-                        : insertShifter.getLatencySamples());
-#else
-  setLatencySamples(insertShifter.getLatencySamples());
-#endif
+  // Rendering is from pre-computed buffers (output at time T
+  // corresponds to input at time T), so there is no processing
+  // latency to report in either mode.
+  setLatencySamples(0);
 
 #if JucePlugin_Enable_ARA
   prepareToPlayForARA(sampleRate, samplesPerBlock,
@@ -598,24 +575,7 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   // Check for parameter automation changes (pitch offset, formant shift)
   checkParameterChanges();
 
-  // Batch 2 (insert prototype): with no ARA document bound, the plugin
-  // is a realtime streaming insert effect (pitch % + formant), not the
-  // capture workflow below. araDocumentController is the audio-thread-
-  // safe signal (isARAModeActive() queries the editor; never call it
-  // here). The block is handled before the playhead tail so the effect
-  // also runs in hosts that provide no transport. The legacy capture
-  // path below still serves ARA instances whose renderer fell through.
-#if JucePlugin_Enable_ARA
-  if (araDocumentController == nullptr) {
-    processInsertEffect(buffer);
-    return;
-  }
-#else
-  processInsertEffect(buffer);
-  return;
-#endif
-
-  // Non-ARA mode (legacy capture workflow)
+  // Non-ARA mode (capture workflow)
   juce::AudioPlayHead::PositionInfo posInfo;
   if (auto *playHead = getPlayHead()) {
     if (auto info = playHead->getPosition())
@@ -628,22 +588,6 @@ void PitchNetAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer,
 
   processNonARAMode(buffer, posInfo,
                     isRealtime() == juce::AudioProcessor::Realtime::yes);
-}
-
-void PitchNetAudioProcessor::processInsertEffect(
-    juce::AudioBuffer<float> &buffer) {
-  // Batch 2 (insert prototype): the streaming shifter does the work;
-  // its buffers were sized in prepareToPlay, so nothing allocates
-  // here. At pitch 100% + neutral formant the shifter passes the input
-  // through bit-exactly. The output stage is gain only - dry/wet is
-  // not applied in insert mode (see MODIFICATIONS.md).
-  insertShifter.setPitchPercent(insertPitchPercentParamValue->load());
-  insertShifter.setFormantShiftSemitones(insertFormantParamValue->load());
-  insertShifter.process(buffer);
-
-  const float outputGainDb = outputGainParamValue->load();
-  if (std::abs(outputGainDb) > 0.01f)
-    buffer.applyGain(std::pow(10.0f, outputGainDb / 20.0f));
 }
 
 void PitchNetAudioProcessor::processBlockBypassed(
@@ -3425,10 +3369,7 @@ void PitchNetAudioProcessor::setAraDocumentController(
       dc->setDocumentProjectSnapshot(*araAnalysisProjectSnapshot, false);
   }
 
-  // Batch 2 (insert prototype): latency follows the mode - ARA renders
-  // from pre-computed buffers (0); unbound means the streaming insert
-  // effect is live and its fixed latency applies.
-  setLatencySamples(dc != nullptr ? 0 : insertShifter.getLatencySamples());
+  setLatencySamples(0);
 }
 
 void PitchNetAudioProcessor::publishPersistentProjectSnapshot(

@@ -2,7 +2,6 @@
 
 #include "../Audio/Engine/PluginTransportController.h"
 #include "../Audio/RealtimePitchProcessor.h"
-#include "../Audio/StreamingPitchShifter.h"
 #include "../JuceHeader.h"
 #include "../UI/IMainView.h"
 #include "../Undo/PitchUndoManager.h"
@@ -296,10 +295,6 @@ public:
   static constexpr const char *PARAM_DRY_WET = "dryWet";
   static constexpr const char *PARAM_PITCH_OFFSET = "pitchOffset";
   static constexpr const char *PARAM_FORMANT_SHIFT = "formantShift";
-  // Batch 2 (insert prototype): the streaming insert effect's own
-  // parameters, driven by the two-fader insert view in non-ARA mode.
-  static constexpr const char *PARAM_INSERT_PITCH_PERCENT = "insertPitchPercent";
-  static constexpr const char *PARAM_INSERT_FORMANT = "insertFormant";
 
 private:
   void handleAsyncUpdate() override;
@@ -310,9 +305,6 @@ private:
     std::atomic<bool> stoppedPending{false};
   };
 
-  // Batch 2 (insert prototype): realtime streaming pitch % + formant
-  // processing for non-ARA use; self-contained in StreamingPitchShifter.
-  void processInsertEffect(juce::AudioBuffer<float> &buffer);
   void processNonARAMode(juce::AudioBuffer<float> &buffer,
                          const juce::AudioPlayHead::PositionInfo &posInfo,
                          bool isRealtime);
@@ -362,9 +354,6 @@ private:
   std::atomic<float> *dryWetParamValue = nullptr;
   std::atomic<float> *pitchOffsetParamValue = nullptr;
   std::atomic<float> *formantShiftParamValue = nullptr;
-  std::atomic<float> *insertPitchPercentParamValue = nullptr;
-  std::atomic<float> *insertFormantParamValue = nullptr;
-  StreamingPitchShifter insertShifter;
 
   // Cached parameter values for change detection (audio thread only)
   float cachedPitchOffset = 0.0f;
