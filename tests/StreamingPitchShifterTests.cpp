@@ -73,6 +73,28 @@ std::vector<float> sine(double freq, size_t count, float amp = 0.7f)
         x[i] = amp * static_cast<float>(std::sin(2.0 * kPi * freq * i / kSampleRate));
     return x;
 }
+
+// Delay of an isolated impulse through the shifter, measured as the
+// energy centroid of the response (an impulse is smeared over a few
+// grains, so a peak would be arbitrary). Also asserts the response
+// carries real energy.
+double measureImpulseDelay(StreamingPitchShifter &shifter)
+{
+    constexpr size_t kImpulseAt = 8192;
+    std::vector<float> input(32768, 0.0f);
+    input[kImpulseAt] = 1.0f;
+    const auto output = renderBlocks(shifter, input);
+    double weightSum = 0.0, moment = 0.0;
+    for (size_t i = kImpulseAt; i < output.size(); ++i)
+    {
+        const double w = std::abs(output[i]);
+        weightSum += w;
+        moment += w * static_cast<double>(i);
+    }
+    CHECK(weightSum > 0.2);
+    return weightSum > 0.0 ? moment / weightSum - static_cast<double>(kImpulseAt)
+                           : 0.0;
+}
 } // namespace
 
 int main()
@@ -143,28 +165,47 @@ int main()
         StreamingPitchShifter shifter;
         shifter.prepare(kSampleRate, 1);
         shifter.setPitchPercent(150.0f);
-        constexpr size_t kImpulseAt = 8192;
-        std::vector<float> input(32768, 0.0f);
-        input[kImpulseAt] = 1.0f;
-        const auto output = renderBlocks(shifter, input);
-
-        // An isolated impulse is smeared over a few grains, so measure
-        // the energy centroid of the response rather than a peak.
-        double weightSum = 0.0, moment = 0.0;
-        for (size_t i = kImpulseAt; i < output.size(); ++i)
-        {
-            const double w = std::abs(output[i]);
-            weightSum += w;
-            moment += w * static_cast<double>(i);
-        }
         const int reported = shifter.getLatencySamples();
-        const double centroid = weightSum > 0.0 ? moment / weightSum : 0.0;
-        const double measuredDelay = centroid - static_cast<double>(kImpulseAt);
+        const double measuredDelay = measureImpulseDelay(shifter);
         std::printf("latency: reported %d samples (%.2f ms), impulse centroid "
-                    "delay %.0f samples, response weight %.2f\n",
-                    reported, reported * 1000.0 / kSampleRate, measuredDelay,
-                    weightSum);
-        CHECK(weightSum > 0.2);
+                    "delay %.0f samples\n",
+                    reported, reported * 1000.0 / kSampleRate, measuredDelay);
+        CHECK(std::abs(measuredDelay - reported) <= 300.0);
+    }
+
+    // --- Latency holds when the percent changes around prepare() --------
+    {
+        // The host order that used to break the delay: a percent is in
+        // effect when prepare() runs (200 here, set before prepare) and
+        // a different one when audio starts (50), because the host
+        // restores/updates parameters in between. Seeding the grain
+        // chain in reset() with the stale ratio put this case ~380
+        // samples late; both seeds must use the live ratio.
+        StreamingPitchShifter shifter;
+        shifter.setPitchPercent(200.0f);
+        shifter.prepare(kSampleRate, 1);
+        shifter.setPitchPercent(50.0f);
+        const int reported = shifter.getLatencySamples();
+        const double measuredDelay = measureImpulseDelay(shifter);
+        std::printf("latency after prepare/percent change: reported %d, "
+                    "measured %.0f samples\n",
+                    reported, measuredDelay);
+        CHECK(std::abs(measuredDelay - reported) <= 300.0);
+    }
+
+    // --- Latency holds across a re-prepare with a new percent -----------
+    {
+        StreamingPitchShifter shifter;
+        shifter.prepare(kSampleRate, 1);
+        shifter.setPitchPercent(150.0f);
+        renderBlocks(shifter, sine(220.0, 8192)); // audio runs at 150%
+        shifter.prepare(kSampleRate, 1);          // host re-prepares
+        shifter.setPitchPercent(75.0f);           // percent lands after
+        const int reported = shifter.getLatencySamples();
+        const double measuredDelay = measureImpulseDelay(shifter);
+        std::printf("latency after re-prepare: reported %d, measured %.0f "
+                    "samples\n",
+                    reported, measuredDelay);
         CHECK(std::abs(measuredDelay - reported) <= 300.0);
     }
 

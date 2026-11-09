@@ -35,19 +35,20 @@ void StreamingPitchShifter::reset()
     currentPeriod = 160.0;
     voiced = false;
 
-    // The first grain is centred early in the stream (nominal-period
-    // grains cover the input until the first analysis window lands);
-    // the intermediate stream uses the same absolute scale (position p
-    // corresponds to input p / ratio), and the reader starts
-    // kLatencySamples behind it, so output sample n carries input from
-    // about n - kLatencySamples.
-    const double ratio = pitchPercent / 100.0;
-    nextInputMark = 128.0;
-    nextInterPos = nextInputMark * ratio;
-    interValidFrom = static_cast<juce::int64>(nextInterPos);
-    interValidTo = interValidFrom;
+    // No ratio-dependent seeding here. The pitch percent can still
+    // change between prepare()/reset() and the first process() call -
+    // the host restores parameters in between - and seeding the grain
+    // chain with that stale ratio while the reader seeds with the live
+    // one put the two scales 128 * (stale / live - 1) input samples
+    // apart, shifting the effective delay away from the reported
+    // kLatencySamples. process() seeds both from the ratio in effect
+    // when audio actually starts.
+    nextInputMark = 0.0;
+    nextInterPos = 0.0;
+    interValidFrom = 0;
+    interValidTo = 0;
     readerPos = 0.0;
-    readerSeeded = false;
+    streamSeeded = false;
     outputWritten = 0;
 }
 
@@ -61,14 +62,23 @@ void StreamingPitchShifter::process(juce::AudioBuffer<float> &buffer)
     const bool bypass = std::abs(ratio - 1.0) < 1.0e-6 &&
                         std::abs(formantSemitones) < 1.0e-6f;
 
-    if (!readerSeeded)
+    if (!streamSeeded)
     {
-        // Seed with the ratio actually in effect when audio starts
-        // (prepare() may run before the host restores parameters):
-        // output sample n must read the intermediate at (n - latency)
-        // * ratio so the end-to-end delay is exactly kLatencySamples.
+        // Seed the grain chain and the reader with the one ratio in
+        // effect when audio starts: the first grain is centred early
+        // in the stream (nominal-period grains cover the input until
+        // the first analysis window lands), the intermediate stream
+        // uses the absolute scale (position p corresponds to input
+        // p / ratio), and output sample n reads the intermediate at
+        // (n - latency) * ratio - so the end-to-end delay is exactly
+        // kLatencySamples regardless of any parameter changes between
+        // prepare() and now.
+        nextInputMark = 128.0;
+        nextInterPos = nextInputMark * ratio;
+        interValidFrom = static_cast<juce::int64>(nextInterPos);
+        interValidTo = interValidFrom;
         readerPos = -static_cast<double>(kLatencySamples) * ratio;
-        readerSeeded = true;
+        streamSeeded = true;
     }
 
     pushInput(buffer);

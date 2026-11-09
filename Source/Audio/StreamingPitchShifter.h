@@ -85,6 +85,9 @@ private:
     juce::int64 interValidFrom = 0;
     juce::int64 interValidTo = 0;
     double readerPos = 0.0;      // intermediate position of the next output sample
-    bool readerSeeded = false;   // readerPos is seeded on the first process() call
+    // The grain chain and readerPos are seeded together on the first
+    // process() call, from the ratio in effect at that moment - not in
+    // reset(), where a stale percent would skew the effective latency.
+    bool streamSeeded = false;
     juce::int64 outputWritten = 0;
 };

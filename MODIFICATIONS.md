@@ -332,9 +332,16 @@ Insert prototype (non-ARA mode; spec change replaced the earlier
   correction by PSOLA grain length. No AI.
 - Latency is fixed at 2048 samples (46.4 ms at 44.1 kHz, 42.7 ms at
   48 kHz), reported via `setLatencySamples` whenever no ARA document
-  is bound (ARA reports 0) and measured exactly by
-  `StreamingPitchShifterTests` (impulse-response centroid = 2048;
-  220 Hz measures 330.0 Hz at 150% and 110.0 Hz at 50%). All buffers
+  is bound (ARA reports 0) and verified by
+  `StreamingPitchShifterTests`: an impulse's energy centroid must
+  land within +/-300 samples of the reported 2048 (grains smear an
+  impulse, so the centroid - not an exact sample position - is the
+  measure), and a 220 Hz sine must measure within a few percent of
+  330 Hz at 150% and of 110 Hz at 50%. The grain chain and the reader
+  are both seeded on the first `process()` call from the ratio then
+  in effect, so a percent change between `prepare()` and the first
+  block - the normal host state-restore order - does not shift the
+  delay; the tests cover that order and a re-prepare. All buffers
   are allocated in `prepare()`; `process()` allocates nothing. At
   pitch 100% and neutral formant the output is the input bit-exact
   (the pipeline keeps running internally so engaging a shift is
@@ -365,6 +372,42 @@ CI:
   and runs every test with ctest, and keeps the check-vst3.ps1 host
   check. `macos-tests` is compile-only (tests not configured, ctest
   not run) while still proving the product builds for macOS.
+
+Post-review fixes (independent review of this batch):
+
+- Project-wide edits - the global pitch offset, the global formant
+  shift and the pitch percent - now go through one predicate,
+  `Project::hasProjectWideEdit()`. The Changes Bypass pass decided
+  "edited" per note from `Note::isNeutralForOriginalWaveform()` alone,
+  so a project whose only edit was a global percent left the bypass
+  with nothing dirty and was never re-rendered (the render request
+  gates on dirty notes); `Project::markEditedNotesDirty()` likewise
+  missed the pitch percent, dropping those projects on engine
+  switches. Both paths now treat every editable note as edited while
+  a project-wide adjustment is in effect; deleted segments stay on
+  the pristine original. Covered by ChangesBypassTests (the
+  pitch-%-only bypass round trip) and SynthesisEngineShareTests.
+- Freehand pitch drawing no longer touches deleted segments: the
+  handler's frame-ownership, original-state capture, position-update
+  and apply loops used `Note::isRest()` and now use
+  `Note::isRestOrDeleted()`, so a stroke breaks across a deleted
+  segment exactly as it breaks across an unowned gap
+  (VariAudioInspectorTests).
+- The freehand smoothing kernel no longer averages across a note
+  boundary: every kernel frame must belong to the same note as the
+  frame being smoothed, so two directly adjacent segments no longer
+  bend each other's joins.
+- StreamingPitchShifter latency: the grain chain and the reader are
+  now both seeded on the first `process()` call from the ratio then
+  in effect, instead of seeding the chain in `reset()` with whatever
+  percent happened to be set when `prepare()` ran. A percent change
+  between prepare and the first block (the normal host state-restore
+  order) shifted the two scales apart and moved the effective delay
+  away from the reported 2048 samples (about 380 samples in the
+  worst ordering the tests exercise). StreamingPitchShifterTests
+  covers the prepare/percent-change and re-prepare orders, and the
+  latency paragraph above now states the test tolerance as it is
+  (+/-300 samples on the impulse centroid).
 
 ### Defaults
 - Pitch Snap Mode Absolute, smart controls "Default", scale shown in the piano
