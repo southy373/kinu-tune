@@ -350,7 +350,7 @@ void ToolbarComponent::refreshLocalisedText()
     redoButton.setTooltip(TR("command.redo") + " (\u21e7\u2318Z)");
 #else
     undoButton.setTooltip(TR("command.undo") + " (Ctrl+Z)");
-    redoButton.setTooltip(TR("command.redo") + " (Ctrl+Y)");
+    redoButton.setTooltip(TR("command.redo") + " (Ctrl+Shift+Z)");
 #endif
 
     zoomLabel.setText(TR("toolbar.zoom"), juce::dontSendNotification);

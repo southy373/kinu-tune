@@ -377,9 +377,11 @@ int main()
         CHECK(near(f.note(0).getMidiNote(), 61.0f));
     }
 
-    // --- Option/Alt: wheel zooms vertically; drag zooms to a rectangle ----
-    // (Batch 2, B2: Alt-drag used to zoom vertically only; it now zooms the
-    // view to the dragged rectangle, and an Alt-click zooms out.)
+    // --- Option/Alt: wheel zooms vertically; drags no longer zoom --------
+    // (Batch 2, B2 gave Alt a zoom rectangle and an Alt-click zoom-out.
+    // Batch 3 removes both: Alt is the split/boundary modifier now, so an
+    // Alt-drag on empty canvas is an ordinary canvas drag and the view
+    // must not move. Alt+wheel vertical zoom is unchanged.)
     {
         Fixture f;
         f.roll.fitPitchRangeToView(50.0f, 70.0f);
@@ -400,16 +402,14 @@ int main()
         f.roll.mouseDown(event(f.roll, start, altLeft, 1));
         f.roll.mouseDrag(event(f.roll, start + juce::Point<float>(40.0f, -60.0f), altLeft, 1));
         f.roll.mouseUp(event(f.roll, start + juce::Point<float>(40.0f, -60.0f), altLeft, 1));
-        CHECK(f.roll.getPixelsPerSemitone() > semitoneMid); // rectangle height zooms in
-        CHECK(f.roll.getPixelsPerSecond() > ppsBefore);    // rectangle width zooms in too
+        CHECK(near(f.roll.getPixelsPerSemitone(), semitoneMid));
+        CHECK(near(f.roll.getPixelsPerSecond(), ppsBefore));
 
-        // An Alt-click (no drag) zooms back out on both axes.
-        const float ppsIn = f.roll.getPixelsPerSecond();
-        const float semitoneIn = f.roll.getPixelsPerSemitone();
+        // An Alt-click (no drag) does not zoom out either.
         f.roll.mouseDown(event(f.roll, start, altLeft, 1));
         f.roll.mouseUp(event(f.roll, start, altLeft, 1));
-        CHECK(f.roll.getPixelsPerSecond() < ppsIn);
-        CHECK(f.roll.getPixelsPerSemitone() < semitoneIn);
+        CHECK(near(f.roll.getPixelsPerSecond(), ppsBefore));
+        CHECK(near(f.roll.getPixelsPerSemitone(), semitoneMid));
     }
 
     // --- Batch 2 (U1): middle-button drag pans; it no longer scrubs -------

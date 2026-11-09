@@ -3738,6 +3738,9 @@ void MainComponent::getCommandInfo(juce::CommandID commandID,
 #if JUCE_MAC
     result.addDefaultKeypress('z', primaryModifier | juce::ModifierKeys::shiftModifier);
 #else
+    // Batch 3: Ctrl+Shift+Z is the redo shortcut (the VariAudio/Nuendo
+    // convention); Ctrl+Y stays as an alias.
+    result.addDefaultKeypress('z', primaryModifier | juce::ModifierKeys::shiftModifier);
     result.addDefaultKeypress('y', primaryModifier);
 #endif
     result.setActive(isPluginMode() ||

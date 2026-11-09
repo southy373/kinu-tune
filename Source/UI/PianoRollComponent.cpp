@@ -53,15 +53,6 @@ namespace
                           juce::Graphics::highResamplingQuality);
   }
 
-  juce::Image createZoomCursorImage()
-  {
-    auto image = juce::ImageFileFormat::loadFrom(
-        BinaryData::zoom_png,
-        static_cast<size_t>(BinaryData::zoom_pngSize));
-    return image.rescaled(image.getWidth() / 2, (image.getHeight() + 1) / 2,
-                          juce::Graphics::highResamplingQuality);
-  }
-
   using pianoRollView::getScaleAccentColour;
   using pianoRollView::isBlackKey;
   using pianoRollView::ScaleToneState;
@@ -328,8 +319,7 @@ namespace
 
 PianoRollComponent::PianoRollComponent()
     : splitMouseCursor(createSplitCursorImage(), 10, 8),
-      mergeMouseCursor(createMergeCursorImage(), 10, 8),
-      zoomMouseCursor(createZoomCursorImage(), 6, 6)
+      mergeMouseCursor(createMergeCursorImage(), 10, 8)
 {
   // Initialize modular components
   coordMapper = std::make_unique<CoordinateMapper>();
@@ -666,11 +656,6 @@ void PianoRollComponent::paint(juce::Graphics &g)
 
   if (trackGestureActive && trackBoxSelecting) {
     const auto rect = juce::Rectangle<float>(trackGestureStart, trackGestureEnd);
-    g.setColour(juce::Colours::white.withAlpha(0.05f)); g.fillRect(rect);
-    g.setColour(juce::Colours::white.withAlpha(0.25f)); g.drawRect(rect);
-  }
-  if (altZoomRectActive) {
-    const auto rect = juce::Rectangle<float>(altZoomRectStart, altZoomRectCurrent);
     g.setColour(juce::Colours::white.withAlpha(0.05f)); g.fillRect(rect);
     g.setColour(juce::Colours::white.withAlpha(0.25f)); g.drawRect(rect);
   }
@@ -1725,137 +1710,6 @@ bool PianoRollComponent::isCanvasPoint(const juce::MouseEvent &e) const
          e.y < headerHeight + getVisibleContentHeight();
 }
 
-bool PianoRollComponent::isModifierZoomDrag(const juce::MouseEvent &e) const
-{
-#if JUCE_MAC
-  return e.mods.isCommandDown();
-#else
-  return e.mods.isCtrlDown();
-#endif
-}
-
-void PianoRollComponent::applyModifierZoomDrag(const juce::MouseEvent &e)
-{
-  const float deltaX = e.position.x - modifierZoomLastPosition.x;
-  const float deltaY = modifierZoomLastPosition.y - e.position.y;
-  modifierZoomLastPosition = e.position;
-
-  if (std::abs(deltaX) < 0.01f && std::abs(deltaY) < 0.01f)
-    return;
-
-  const float mouseX = static_cast<float>(e.x - pianoKeysWidth);
-  const float mouseY = static_cast<float>(e.y - headerHeight);
-
-  if (std::abs(deltaX) >= 0.01f && !modifierZoomVerticalOnly)
-  {
-    const float zoomFactorX = std::pow(1.0065f, deltaX);
-    const double timeAtMouse = xToTime(mouseX + static_cast<float>(scrollX));
-    const int visibleWidth = getVisibleContentWidth();
-    const double totalTime = getTimelineLength();
-    const float minPpsX =
-        (visibleWidth > 0 && totalTime > 0.0)
-            ? std::max(MIN_PIXELS_PER_SECOND,
-                       static_cast<float>(visibleWidth / totalTime))
-            : MIN_PIXELS_PER_SECOND;
-    const float newPpsX = juce::jlimit(minPpsX, MAX_PIXELS_PER_SECOND,
-                                       pixelsPerSecond * zoomFactorX);
-
-    pixelsPerSecond = newPpsX;
-    coordMapper->setPixelsPerSecond(newPpsX);
-
-    const float newMouseX = static_cast<float>(timeAtMouse * newPpsX);
-    scrollX = clampScrollX(static_cast<double>(newMouseX - mouseX));
-    coordMapper->setScrollX(scrollX);
-  }
-
-  if (std::abs(deltaY) >= 0.01f)
-  {
-    const float zoomFactorY = std::pow(1.0065f, deltaY);
-    setPixelsPerSemitone(pixelsPerSemitone * zoomFactorY, mouseY);
-  }
-
-  updateScrollBars();
-  repaint();
-
-  if (std::abs(deltaX) >= 0.01f && !modifierZoomVerticalOnly && onZoomChanged)
-    onZoomChanged(pixelsPerSecond);
-}
-
-void PianoRollComponent::applyAltZoomRectangle(const juce::MouseEvent &)
-{
-  // Batch 2 (B2): a rectangle of any real size zooms the view to it; a
-  // click-sized rectangle is an Alt-click and zooms out around the point.
-  const auto rect = juce::Rectangle<float>(altZoomRectStart, altZoomRectCurrent);
-  const float clickContentX = altZoomRectStart.x - pianoKeysWidth;
-  const float clickContentY = altZoomRectStart.y - headerHeight;
-
-  if (rect.getWidth() < 6.0f && rect.getHeight() < 6.0f)
-  {
-    constexpr float zoomOut = 0.6f;
-    const double timeAtMouse =
-        xToTime(clickContentX + static_cast<float>(scrollX));
-    setPixelsPerSecond(pixelsPerSecond * zoomOut);
-    scrollX = clampScrollX(timeAtMouse * pixelsPerSecond - clickContentX);
-    coordMapper->setScrollX(scrollX);
-    setPixelsPerSemitone(pixelsPerSemitone * zoomOut, clickContentY);
-    updateScrollBars();
-    if (onZoomChanged)
-      onZoomChanged(pixelsPerSecond);
-    repaint();
-    return;
-  }
-
-  if (rect.getWidth() >= 6.0f)
-  {
-    const int visibleWidth = getVisibleContentWidth();
-    const double startTime =
-        xToTime(rect.getX() - pianoKeysWidth + static_cast<float>(scrollX));
-    const double endTime =
-        xToTime(rect.getRight() - pianoKeysWidth + static_cast<float>(scrollX));
-    if (visibleWidth > 0 && endTime > startTime)
-    {
-      setPixelsPerSecond(
-          static_cast<float>(visibleWidth / (endTime - startTime)));
-      scrollX = clampScrollX(startTime * pixelsPerSecond);
-      coordMapper->setScrollX(scrollX);
-      updateScrollBars();
-      if (onZoomChanged)
-        onZoomChanged(pixelsPerSecond);
-    }
-  }
-
-  if (rect.getHeight() >= 6.0f)
-  {
-    const int visibleHeight = getVisibleContentHeight();
-    const float topMidi =
-        yToMidi(rect.getY() - headerHeight + static_cast<float>(scrollY));
-    const float bottomMidi =
-        yToMidi(rect.getBottom() - headerHeight + static_cast<float>(scrollY));
-    const float span = topMidi - bottomMidi;
-    if (visibleHeight > 0 && span > 0.0f)
-    {
-      setPixelsPerSemitone(static_cast<float>(visibleHeight) / span, 0.0f);
-      // setPixelsPerSemitone anchored the old top row; put the rectangle's
-      // top edge at the top of the view instead.
-      const double totalHeight =
-          (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
-      const double maxScrollY =
-          std::max(0.0, totalHeight - static_cast<double>(visibleHeight));
-      scrollY = juce::jlimit(
-          0.0, maxScrollY,
-          (static_cast<double>(MAX_MIDI_NOTE) - topMidi) * pixelsPerSemitone);
-      coordMapper->setScrollY(scrollY);
-      updateScrollBars();
-    }
-  }
-  repaint();
-}
-
-bool PianoRollComponent::isModifierPanDrag(const juce::MouseEvent &e) const
-{
-  return e.mods.isAltDown();
-}
-
 void PianoRollComponent::applyModifierPanDrag(const juce::MouseEvent &e)
 {
   const float deltaX = e.position.x - modifierPanLastPosition.x;
@@ -2166,17 +2020,10 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     return;
   }
 
-  // Cmd-click on a segment toggles its selection (VariAudio); zoom-drag
-  // stays available from empty canvas.
-  const bool cmdClickOnSegment =
-      editMode == EditMode::Select && findNoteAt(adjustedX, adjustedY) != nullptr;
-  if (isCanvasPoint(e) && isModifierZoomDrag(e) && !cmdClickOnSegment)
-  {
-    modifierZoomDragActive = true;
-    modifierZoomVerticalOnly = false;
-    modifierZoomLastPosition = e.position;
-    return;
-  }
+  // Batch 3: the Ctrl-hold zoom drag is gone. Ctrl keeps its editing
+  // jobs only: click toggles the selection, drag on a segment is the
+  // fine (snap-off) pitch drag, Ctrl+Alt borrows the drawing tool and
+  // Ctrl+Alt+Shift the stretch tool (routing at the delegation below).
 
   if (isCanvasPoint(e) && e.mods.isAltDown() && trackViewMode)
   {
@@ -2193,26 +2040,11 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
       }
     }
   }
-  // On a segment Alt is Relative snap / Alt-click split; anywhere else on
-  // the canvas Alt starts a zoom rectangle (batch 2, B2): drag to zoom into
-  // the rectangle, a plain Alt-click zooms out, Alt-double-click fits.
-  // Smart controls keep their own Alt behaviour (glue/split clicks, and
-  // Alt+tilt rotation, B6): several sit outside the segment's own bounds,
-  // so the note test alone would let the rectangle steal their drags.
-  const bool altNoteDrag =
-      editMode == EditMode::Select && findNoteAt(adjustedX, adjustedY) != nullptr;
-  const bool altOnSmartControl =
-      pitchToolHandles && pitchToolHandles->hitTest(adjustedX, adjustedY) >= 0;
-  if (isCanvasPoint(e) && isModifierPanDrag(e) && !altNoteDrag &&
-      !altOnSmartControl)
-  {
-    altZoomRectActive = true;
-    altZoomRectStart = e.position;
-    altZoomRectCurrent = e.position;
-    setMouseCursor(juce::MouseCursor::CrosshairCursor);
-    repaint();
-    return;
-  }
+  // Batch 3: the Alt zoom rectangle is gone too. Alt belongs to the
+  // mode handlers: in Select mode an Alt-click on a segment splits it,
+  // Alt on a segment edge drags the boundary, and Alt on the tilt
+  // handles rotates (all in SelectHandler / the tool controller). An
+  // Alt-double-click on empty canvas still fits the view (mouseDoubleClick).
 
   // Batch 2 (U4): a plain drag on empty canvas is a range (box) selection,
   // Nuendo-style - it falls through to the mode handlers below (the track
@@ -2320,6 +2152,28 @@ void PianoRollComponent::mouseDown(const juce::MouseEvent &e)
     }
   }
 
+  // Batch 3: modifier-held tools. In Select mode, Ctrl+Alt borrows the
+  // freehand drawing tool and Ctrl+Alt+Shift borrows the stretch
+  // (timing) tool for this one gesture; the borrowed tool owns the
+  // whole drag until mouseUp. Ctrl alone is never routed (selection
+  // toggle / fine drag), and Alt alone stays with SelectHandler.
+  if (editMode == EditMode::Select && e.mods.isLeftButtonDown() &&
+      isCanvasPoint(e) && e.mods.isAltDown() &&
+      (e.mods.isCtrlDown() || e.mods.isCommandDown()))
+  {
+    InteractionHandler *tool =
+        e.mods.isShiftDown()
+            ? static_cast<InteractionHandler *>(timingHandler_.get())
+            : static_cast<InteractionHandler *>(pitchDrawingHandler_.get());
+    if (tool != nullptr)
+    {
+      modifierToolHandler_ = tool;
+      tool->mouseDown(e, adjustedX, adjustedY);
+      updatePreviewButtonBounds();
+      return;
+    }
+  }
+
   // Delegate to current mode handler
   if (currentHandler_)
   {
@@ -2335,13 +2189,6 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
     return;
   if (swallowGestureUntilMouseUp)
     return;
-  if (altZoomRectActive)
-  {
-    altZoomRectCurrent = e.position;
-    repaint();
-    return;
-  }
-
   if (shiftCtrlSeekActive)
   {
     float adjustedX = e.x - pianoKeysWidth + static_cast<float>(scrollX);
@@ -2349,12 +2196,6 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
     setCursorTime(time);
     if (onSeek)
       onSeek(time);
-    return;
-  }
-
-  if (modifierZoomDragActive)
-  {
-    applyModifierZoomDrag(e);
     return;
   }
 
@@ -2383,8 +2224,11 @@ void PianoRollComponent::mouseDrag(const juce::MouseEvent &e)
     return;
   }
 
-  // Delegate to current mode handler
-  if (currentHandler_ && currentHandler_->mouseDrag(e, adjustedX, adjustedY))
+  // Delegate to the borrowed modifier tool if one owns this drag,
+  // otherwise to the current mode handler.
+  InteractionHandler *dragHandler =
+      modifierToolHandler_ != nullptr ? modifierToolHandler_ : currentHandler_;
+  if (dragHandler && dragHandler->mouseDrag(e, adjustedX, adjustedY))
   {
     updatePreviewButtonBounds();
     if (shouldRepaint)
@@ -2405,19 +2249,6 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
     swallowGestureUntilMouseUp = false;
     return;
   }
-  if (altZoomRectActive)
-  {
-    altZoomRectActive = false;
-    updateMouseCursorForEditMode();
-    // The second half of an Alt double-click lands here too; that gesture
-    // already fitted the view in mouseDoubleClick, so it must not also
-    // read as an Alt-click zoom-out.
-    if (e.getNumberOfClicks() < 2)
-      applyAltZoomRectangle(e);
-    repaint();
-    return;
-  }
-
   if (shiftCtrlSeekActive)
   {
     shiftCtrlSeekActive = false;
@@ -2429,12 +2260,6 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
     pianoKeyAuditionMouseDown = false;
     if (onPianoKeyAuditionFinished)
       onPianoKeyAuditionFinished();
-    return;
-  }
-
-  if (modifierZoomDragActive)
-  {
-    modifierZoomDragActive = false;
     return;
   }
 
@@ -2453,18 +2278,22 @@ void PianoRollComponent::mouseUp(const juce::MouseEvent &e)
   if (loopDragHandler_->mouseUp(e, adjustedX, adjustedY))
     return;
 
-  // Delegate to current mode handler
-  if (currentHandler_)
+  // Delegate to the borrowed modifier tool if one owns this gesture,
+  // otherwise to the current mode handler; the borrow ends here either
+  // way.
+  InteractionHandler *upHandler =
+      modifierToolHandler_ != nullptr ? modifierToolHandler_ : currentHandler_;
+  modifierToolHandler_ = nullptr;
+  if (upHandler)
   {
-    currentHandler_->mouseUp(e, adjustedX, adjustedY);
+    upHandler->mouseUp(e, adjustedX, adjustedY);
     updatePreviewButtonBounds();
   }
 }
 
 void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
 {
-  if (isCanvasPoint(e) && !isModifierZoomDrag(e)) prepareTrackPointer(e.position, true);
-  const bool showZoomCursor = isCanvasPoint(e) && isModifierZoomDrag(e);
+  if (isCanvasPoint(e)) prepareTrackPointer(e.position, true);
   const float adjustedX =
       e.x - pianoKeysWidth + static_cast<float>(scrollX);
   const float adjustedY =
@@ -2474,21 +2303,12 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   if (e.y >= headerHeight && e.x >= pianoKeysWidth)
     noteAtPointer = findNoteAt(adjustedX, adjustedY);
 
-  const bool altControlsNoteSnap =
-      editMode == EditMode::Select && noteAtPointer != nullptr;
-  if (!showZoomCursor && isCanvasPoint(e) && e.mods.isAltDown() &&
-      !altControlsNoteSnap)
-  {
-    setMouseCursor(juce::MouseCursor::CrosshairCursor); // Alt-drag: zoom rectangle
-    return;
-  }
-
   // Hide the bound take outside the track's playback windows, rather than
   // treating any one region as the interaction boundary.
   const bool overHoverControls = hoveredNote &&
       ((pitchToolHandles && pitchToolHandles->containsLayoutPoint(adjustedX, adjustedY)) ||
        findPreviewButtonNoteAt(adjustedX, adjustedY));
-  if (!showZoomCursor && isCanvasPoint(e) && trackViewMode && !overHoverControls &&
+  if (isCanvasPoint(e) && trackViewMode && !overHoverControls &&
       findTrackRegionAtPointer(e.position) == nullptr)
   {
     setHoveredNote(nullptr);
@@ -2578,10 +2398,6 @@ void PianoRollComponent::mouseMove(const juce::MouseEvent &e)
   {
     setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
   }
-  else if (showZoomCursor)
-  {
-    setMouseCursor(zoomMouseCursor);
-  }
   else if (editMode == EditMode::Select)
   {
     setMouseCursor(juce::MouseCursor::NormalCursor);
@@ -2630,31 +2446,12 @@ void PianoRollComponent::mouseEnter(const juce::MouseEvent &e)
 void PianoRollComponent::modifierKeysChanged(
     const juce::ModifierKeys &modifiers)
 {
-  const auto mousePosition = getMouseXYRelative();
-  const bool mouseOverCanvas =
-      mousePosition.x >= pianoKeysWidth && mousePosition.y >= headerHeight &&
-      mousePosition.x < pianoKeysWidth + getVisibleContentWidth() &&
-      mousePosition.y < headerHeight + getVisibleContentHeight();
-  const float worldX = mousePosition.x - pianoKeysWidth +
-                       static_cast<float>(scrollX);
-  const float worldY = mousePosition.y - headerHeight +
-                       static_cast<float>(scrollY);
-  const bool pointerOverNote =
-      mouseOverCanvas && editMode == EditMode::Select &&
-      findNoteAt(worldX, worldY) != nullptr;
-
-#if JUCE_MAC
-  const bool zoomModifierDown = modifiers.isCommandDown();
-#else
-  const bool zoomModifierDown = modifiers.isCtrlDown();
-#endif
-
-  if (zoomModifierDown && mouseOverCanvas)
-    setMouseCursor(zoomMouseCursor);
-  else if (modifierPanDragActive)
+  juce::ignoreUnused(modifiers);
+  // Batch 3: no modifier changes the cursor any more (the Ctrl zoom
+  // cursor and the Alt zoom-rectangle cursor went with those gestures);
+  // only an in-progress middle-drag pan keeps its hand.
+  if (modifierPanDragActive)
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
-  else if (modifiers.isAltDown() && mouseOverCanvas && !pointerOverNote)
-    setMouseCursor(juce::MouseCursor::UpDownResizeCursor);
   else
     updateMouseCursorForEditMode();
 }

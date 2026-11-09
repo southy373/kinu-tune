@@ -371,10 +371,6 @@ private:
   bool shouldSnapCycleToGrid() const;
   double snapTimeToTimelineGrid(double timeSeconds) const;
   bool isCanvasPoint(const juce::MouseEvent &e) const;
-  bool isModifierZoomDrag(const juce::MouseEvent &e) const;
-  void applyModifierZoomDrag(const juce::MouseEvent &e);
-  void applyAltZoomRectangle(const juce::MouseEvent &e);
-  bool isModifierPanDrag(const juce::MouseEvent &e) const;
   void applyModifierPanDrag(const juce::MouseEvent &e);
   void updateMouseCursorForEditMode();
 
@@ -544,7 +540,6 @@ private:
   EditMode &editMode = viewState.editMode;
   juce::MouseCursor splitMouseCursor;
   juce::MouseCursor mergeMouseCursor;
-  juce::MouseCursor zoomMouseCursor;
 
   // View settings
   bool &showDeltaPitch = viewState.showDeltaPitch;
@@ -603,17 +598,13 @@ public:
 private:
   // Mouse drag throttling
   juce::int64 lastDragRepaintTime = 0;
-  bool modifierZoomDragActive = false;
-  // Cmd/Ctrl-drag zooms both axes (Option/Alt uses the zoom rectangle).
-  bool modifierZoomVerticalOnly = false;
-  juce::Point<float> modifierZoomLastPosition;
   bool modifierPanDragActive = false;
   juce::Point<float> modifierPanLastPosition;
   bool pianoKeyAuditionMouseDown = false;
-  // Batch 2 (B2): Option/Alt-drag draws a zoom rectangle on the canvas.
-  bool altZoomRectActive = false;
-  juce::Point<float> altZoomRectStart;
-  juce::Point<float> altZoomRectCurrent;
+  // Batch 3: the tool borrowed by a modifier-held gesture (Ctrl+Alt =
+  // drawing, Ctrl+Alt+Shift = stretch) in Select mode. Set on mouseDown,
+  // owns the drag, cleared on mouseUp.
+  InteractionHandler *modifierToolHandler_ = nullptr;
   bool shiftCtrlSeekActive = false;
   MainViewRegionPreviewList regionPreviews;
   bool trackViewMode = false;
