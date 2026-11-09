@@ -92,7 +92,7 @@ jobs:
           } else {
             $appId = "38373E75-C136-4F15-8F5D-6F966750C257"
           }
-          & $iscc "/DAppVersion=$env:VERSION" "/DStageDir=$env:STAGE_DIR" "/DRedist=$(Join-Path $PWD 'vc_redist.x64.exe')" "/DProductName=$env:PRODUCT" "/DProductAppId=$appId" "/O$(Join-Path $PWD 'Output')" "packaging/windows/KinuTune.iss"
+          & $iscc "/DAppVersion=$env:VERSION" "/DStageDir=$env:STAGE_DIR" "/DRedist=$(Join-Path $PWD 'vc_redist.x64.exe')" "/DProductName=$env:PRODUCT" "/DProductAppId=$appId" "/O$(Join-Path $PWD 'Output')" "packaging/windows/PureTune.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
           "SETUP_NAME=$env:SETUP_STEM.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
