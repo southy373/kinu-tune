@@ -78,11 +78,6 @@ public:
   // back on the device the user picked, not the platform default.
   juce::String getAudioDeviceState() const { return audioDeviceState; }
   void setAudioDeviceState(const juce::String &xml) { audioDeviceState = xml; }
-  juce::String getSkippedUpdateVersion() const { return skippedUpdateVersion; }
-  void setSkippedUpdateVersion(const juce::String &version)
-  {
-    skippedUpdateVersion = version;
-  }
   double getUiBrightnessPercent() const { return uiBrightnessPercent; }
   void setUiBrightnessPercent(double percent)
   {
@@ -170,7 +165,6 @@ private:
   bool followSystemAudioOutput = true;
   juce::String preferredAudioOutputDevice;
   juce::String audioDeviceState;
-  juce::String skippedUpdateVersion;
   double uiBrightnessPercent = 100.0;
   bool liveAuditionEnabled = false;
 

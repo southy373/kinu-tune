@@ -220,9 +220,6 @@ void SettingsManager::loadConfig()
         if (configObj->hasProperty("audioDeviceState"))
           audioDeviceState =
               configObj->getProperty("audioDeviceState").toString();
-        if (configObj->hasProperty("skippedUpdateVersion"))
-          skippedUpdateVersion =
-              configObj->getProperty("skippedUpdateVersion").toString();
         if (configObj->hasProperty("uiBrightnessPercent"))
           uiBrightnessPercent = juce::jlimit(
               75.0, 200.0,
@@ -288,7 +285,6 @@ void SettingsManager::saveConfig()
   config->setProperty("followSystemAudioOutput", followSystemAudioOutput);
   config->setProperty("preferredAudioOutputDevice", preferredAudioOutputDevice);
   config->setProperty("audioDeviceState", audioDeviceState);
-  config->setProperty("skippedUpdateVersion", skippedUpdateVersion);
   config->setProperty("uiBrightnessPercent", uiBrightnessPercent);
   config->setProperty("liveAuditionEnabled", liveAuditionEnabled);
 
