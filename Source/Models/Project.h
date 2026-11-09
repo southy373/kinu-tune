@@ -277,13 +277,25 @@ public:
     // Check if any notes are dirty
     bool hasDirtyNotes() const;
 
+    // True when a project-wide adjustment is in effect: the global pitch
+    // offset, the global formant shift, or the Batch 2 pitch percent
+    // differing from 100. Any of these changes the rendering of every
+    // editable note even when the notes themselves are neutral, so "does
+    // this note carry an edit that reaches the audio" must consult this
+    // as well as Note::isNeutralForOriginalWaveform - the Changes Bypass
+    // and markEditedNotesDirty both do, through this one predicate. The
+    // length percent is deliberately not part of it: it moves the notes'
+    // own timing, which isNeutralForOriginalWaveform already sees.
+    bool hasProjectWideEdit() const;
+
     // Mark every note whose edits reach the audio (the inverse of
-    // Note::isNeutralForOriginalWaveform) for re-rendering, and set the F0
-    // dirty range over their span exactly as an edit of those notes would.
-    // Used when the rendering engine changes: the audio was made by the
-    // previous engine, so the same notes must be rendered again by the new
-    // one. A project-wide pitch offset or formant shift reaches every note.
-    // Returns the number of notes marked; nothing is marked when it is 0.
+    // Note::isNeutralForOriginalWaveform, extended by hasProjectWideEdit)
+    // for re-rendering, and set the F0 dirty range over their span exactly
+    // as an edit of those notes would. Used when the rendering engine
+    // changes: the audio was made by the previous engine, so the same
+    // notes must be rendered again by the new one. A project-wide edit
+    // reaches every note. Returns the number of notes marked; nothing is
+    // marked when it is 0.
     int markEditedNotesDirty();
 
     // F0 curve dirty tracking (for pitch tools and undo/redo)

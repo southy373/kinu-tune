@@ -783,8 +783,18 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     // pure "do the edit parameters differ from the analysis" question.
     for (auto &note : project->getNotes())
       note.setRenderedEdit(false);
+    // A project-wide adjustment (Project::hasProjectWideEdit) reaches
+    // every editable note even when the note itself is neutral - without
+    // it, a project whose only edit is the global pitch % or formant
+    // would leave the bypass with nothing dirty, and the render request
+    // on lifting the bypass would early-return on its dirty gate,
+    // leaving the original audio in place under edited settings. Deleted
+    // and rest segments are exempt from the project-wide part, matching
+    // Project::markEditedNotesDirty: they stay on the pristine original.
+    const bool projectWideEdit = project->hasProjectWideEdit();
     for (auto &note : project->getNotes()) {
-      const bool hasEdit = !note.isNeutralForOriginalWaveform();
+      const bool hasEdit = !note.isNeutralForOriginalWaveform() ||
+                           (projectWideEdit && !note.isRestOrDeleted());
       note.setSynthDirty(hasEdit);
       // The render gates (EditorController and this synthesizer) key off
       // the generic dirty flag, so an edited note must carry it too:

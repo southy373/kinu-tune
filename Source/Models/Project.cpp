@@ -144,10 +144,15 @@ void Project::clearAllDirty()
     f0DirtyEnd = -1;
 }
 
+bool Project::hasProjectWideEdit() const
+{
+    return globalPitchOffset != 0.0f || formantShift != 0.0f ||
+           getPitchPercent() != 100.0f;
+}
+
 int Project::markEditedNotesDirty()
 {
-    const bool wholeProjectEdited =
-        globalPitchOffset != 0.0f || formantShift != 0.0f;
+    const bool wholeProjectEdited = hasProjectWideEdit();
 
     int marked = 0;
     int start = -1;

@@ -80,6 +80,79 @@ int main()
     CHECK(!notes[1].isSynthDirty());
     CHECK(project.hasDirtyNotes());
 
+    // A project whose ONLY edit is project-wide (the Batch 2 global
+    // pitch %): no note carries an edit of its own, yet the bypass round
+    // trip must still re-render - the render request that lifts the
+    // bypass gates on the notes being dirty. The deleted segment stays
+    // outside editing and must not be marked.
+    {
+        Project globalOnly;
+        auto& gAudio = globalOnly.getAudioData();
+        gAudio.sampleRate = 44100;
+        gAudio.originalWaveform.setSize(1, numSamples);
+        for (int i = 0; i < numSamples; ++i)
+            gAudio.originalWaveform.setSample(0, i, 0.5f * std::sin(i * 0.05f));
+        gAudio.waveform.setSize(1, numSamples);
+        for (int i = 0; i < numSamples; ++i)
+            gAudio.waveform.setSample(0, i, -0.25f);
+
+        Note plain(0, 100, 60.0f);
+        plain.setSrcStartFrame(0);
+        plain.setSrcEndFrame(100);
+        plain.setOriginalMidiNote(60.0f);
+        plain.setRenderedEdit(true);
+        plain.setSynthDirty(false);
+        globalOnly.addNote(plain);
+
+        Note deleted(100, 200, 62.0f);
+        deleted.setSrcStartFrame(100);
+        deleted.setSrcEndFrame(200);
+        deleted.setOriginalMidiNote(62.0f);
+        deleted.setDeleted(true); // deleting reset its edits: it is neutral
+        deleted.setRenderedEdit(true);
+        deleted.setSynthDirty(false);
+        globalOnly.addNote(deleted);
+
+        globalOnly.setPitchPercent(125.0f);
+        CHECK(globalOnly.getNotes()[0].isNeutralForOriginalWaveform());
+        CHECK(globalOnly.hasProjectWideEdit());
+        CHECK(!globalOnly.hasDirtyNotes());
+
+        globalOnly.setChangesBypassed(true);
+        IncrementalSynthesizer gSynth;
+        gSynth.setProject(&globalOnly);
+        bool gCompleted = false;
+        bool gSucceeded = false;
+        gSynth.synthesizeRegion(nullptr, [&](bool success)
+                                {
+                                    gCompleted = true;
+                                    gSucceeded = success;
+                                });
+        CHECK(gCompleted);
+        CHECK(gSucceeded);
+        for (int i = 0; i < numSamples; ++i)
+            CHECK(gAudio.waveform.getSample(0, i) ==
+                  gAudio.originalWaveform.getSample(0, i));
+
+        const auto& gNotes = globalOnly.getNotes();
+        // The plain note must re-render when the bypass lifts: it is
+        // un-rendered and carries both dirty flags.
+        CHECK(!gNotes[0].hasRenderedEdit());
+        CHECK(gNotes[0].isSynthDirty());
+        CHECK(gNotes[0].isDirty());
+        CHECK(globalOnly.hasDirtyNotes());
+        // The deleted segment is not part of the project-wide edit.
+        CHECK(!gNotes[1].isSynthDirty());
+        CHECK(!gNotes[1].isDirty());
+
+        // The engine-switch path must pick the same project up too.
+        globalOnly.clearAllDirty();
+        CHECK(!globalOnly.hasDirtyNotes());
+        CHECK(globalOnly.markEditedNotesDirty() == 1);
+        CHECK(globalOnly.getNotes()[0].isDirty());
+        CHECK(!globalOnly.getNotes()[1].isDirty());
+    }
+
     // Without an original waveform there is nothing to bypass to.
     Project empty;
     empty.setChangesBypassed(true);

@@ -138,6 +138,33 @@ void projectWideEditsReachEveryNote() {
   CHECK(range.second == 400 + 60);
 }
 
+void pitchPercentAloneIsAProjectWideEdit() {
+  auto project = projectWithF0(2000);
+  Note a(100, 200, 60.0f);
+  Note b(300, 400, 62.0f);
+  Note deleted(500, 600, 60.0f);
+  deleted.setDeleted(true);
+  project.addNote(a);
+  project.addNote(b);
+  project.addNote(deleted);
+  project.clearAllDirty();
+
+  // Back at exactly 100 there is no project-wide edit at all.
+  CHECK(!project.hasProjectWideEdit());
+  CHECK(project.markEditedNotesDirty() == 0);
+
+  project.setPitchPercent(125.0f);
+  CHECK(project.hasProjectWideEdit());
+  CHECK(project.markEditedNotesDirty() == 2);
+  const auto &notes = project.getNotes();
+  CHECK(notes[0].isDirty());
+  CHECK(notes[1].isDirty());
+  CHECK(!notes[2].isDirty()); // deleted segments stay on the original
+  const auto range = project.getF0DirtyRange();
+  CHECK(range.first == 100 - 60);
+  CHECK(range.second == 400 + 60);
+}
+
 } // namespace
 
 int main() {
@@ -153,6 +180,7 @@ int main() {
   markEditedNotesDirtyMarksOnlyNotesWhoseEditsReachTheAudio();
   markEditedNotesDirtyLeavesAnUneditedProjectAlone();
   projectWideEditsReachEveryNote();
+  pitchPercentAloneIsAProjectWideEdit();
   std::cout << "SynthesisEngineShareTests passed" << std::endl;
   return 0;
 }
