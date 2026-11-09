@@ -5,6 +5,7 @@
 #include "../Source/Audio/ResampledLoopAudition.h"
 #include "../Source/Models/ProjectSerializer.h"
 #include "../Source/UI/PianoRollComponent.h"
+#include "../Source/UI/PianoRoll/PitchDrawingConfirmationPanel.h"
 #include "../Source/UI/VariAudioInspector.h"
 #include "../Source/Undo/PitchUndoManager.h"
 #include "../Source/Utils/PitchMacroScope.h"
@@ -333,7 +334,52 @@ int main()
         CHECK(near(f.note(0).getMidiNote(), 61.0f));
     }
 
-    // --- Option/Alt: vertical zoom only (wheel and drag) -------------------
+    // --- Batch 2: Ctrl held during a segment drag = fine adjust (no snap)
+    {
+        Fixture f;
+        f.roll.fitPitchRangeToView(56.0f, 68.0f);
+        const auto held = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier);
+        const auto ctrlHeld = juce::ModifierKeys(
+            juce::ModifierKeys::leftButtonModifier |
+            juce::ModifierKeys::ctrlModifier);
+        const auto xAt = [&f](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * f.roll.getPixelsPerSecond() -
+                   static_cast<float>(f.roll.getScrollX());
+        };
+        const auto yAt = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(f.roll.getScrollY());
+        };
+        const juce::Point<float> start(xAt(50), yAt(60.3f));
+        // A third-of-a-semitone drag: snapped, it would land on 61.
+        const auto end = start + juce::Point<float>(0.0f, -0.35f * f.roll.getPixelsPerSemitone());
+
+        // With Ctrl held for the drag, the pitch follows the pointer
+        // continuously: 60.3 + 0.35, not the semitone 61.
+        f.roll.mouseDown(event(f.roll, start, held, 1));
+        f.roll.mouseDrag(event(f.roll, start + juce::Point<float>(0.0f, -3.0f), ctrlHeld, 1));
+        f.roll.mouseDrag(event(f.roll, end, ctrlHeld, 1));
+        f.roll.mouseUp(event(f.roll, end, ctrlHeld, 1));
+        CHECK(near(f.note(0).getMidiNote(), 60.65f, 0.03f));
+        f.history.undo();
+        CHECK(near(f.note(0).getMidiNote(), 60.3f));
+
+        // Releasing Ctrl mid-drag re-engages the snap for the same total
+        // offset: the segment lands on the semitone after all.
+        f.roll.mouseDown(event(f.roll, start, held, 1));
+        f.roll.mouseDrag(event(f.roll, end, ctrlHeld, 1));
+        f.roll.mouseDrag(event(f.roll, end, held, 1));
+        f.roll.mouseUp(event(f.roll, end, held, 1));
+        CHECK(near(f.note(0).getMidiNote(), 61.0f));
+    }
+
+    // --- Option/Alt: wheel zooms vertically; drag zooms to a rectangle ----
+    // (Batch 2, B2: Alt-drag used to zoom vertically only; it now zooms the
+    // view to the dragged rectangle, and an Alt-click zooms out.)
     {
         Fixture f;
         f.roll.fitPitchRangeToView(50.0f, 70.0f);
@@ -354,8 +400,353 @@ int main()
         f.roll.mouseDown(event(f.roll, start, altLeft, 1));
         f.roll.mouseDrag(event(f.roll, start + juce::Point<float>(40.0f, -60.0f), altLeft, 1));
         f.roll.mouseUp(event(f.roll, start + juce::Point<float>(40.0f, -60.0f), altLeft, 1));
-        CHECK(f.roll.getPixelsPerSemitone() > semitoneMid);
-        CHECK(near(f.roll.getPixelsPerSecond(), ppsBefore));
+        CHECK(f.roll.getPixelsPerSemitone() > semitoneMid); // rectangle height zooms in
+        CHECK(f.roll.getPixelsPerSecond() > ppsBefore);    // rectangle width zooms in too
+
+        // An Alt-click (no drag) zooms back out on both axes.
+        const float ppsIn = f.roll.getPixelsPerSecond();
+        const float semitoneIn = f.roll.getPixelsPerSemitone();
+        f.roll.mouseDown(event(f.roll, start, altLeft, 1));
+        f.roll.mouseUp(event(f.roll, start, altLeft, 1));
+        CHECK(f.roll.getPixelsPerSecond() < ppsIn);
+        CHECK(f.roll.getPixelsPerSemitone() < semitoneIn);
+    }
+
+    // --- Batch 2 (U1): middle-button drag pans; it no longer scrubs -------
+    {
+        Fixture f;
+        // The timeline length comes from the waveform; give the project one
+        // so horizontal scrolling has room to move.
+        f.project.getAudioData().waveform.setSize(1, 600 * 512);
+        f.roll.setPixelsPerSecond(200.0f);
+        f.roll.setScrollX(100.0);
+        bool seeked = false;
+        f.roll.onSeek = [&seeked](double) { seeked = true; };
+        const auto middle = juce::ModifierKeys(juce::ModifierKeys::middleButtonModifier);
+        const juce::Point<float> start(400.0f, 200.0f);
+        f.roll.mouseDown(event(f.roll, start, middle, 1));
+        f.roll.mouseDrag(event(f.roll, start + juce::Point<float>(-50.0f, 0.0f), middle, 1));
+        f.roll.mouseUp(event(f.roll, start + juce::Point<float>(-50.0f, 0.0f), middle, 1));
+        CHECK(near(static_cast<float>(f.roll.getScrollX()), 150.0f, 0.5f));
+        CHECK(!seeked); // the playhead did not move: pan, not scrub
+    }
+
+    // --- Batch 2 (U4): a plain drag on empty canvas is a box selection ----
+    {
+        Fixture f;
+        f.roll.fitPitchRangeToView(56.0f, 68.0f);
+        const auto held = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier);
+        const auto xAt = [&f](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * f.roll.getPixelsPerSecond() -
+                   static_cast<float>(f.roll.getScrollX());
+        };
+        const auto yAt = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(f.roll.getScrollY());
+        };
+        const double scrollBefore = f.roll.getScrollX();
+        // Drag a box around the first two segments: both become selected,
+        // and the view does not pan (it used to pan from empty canvas).
+        const juce::Point<float> start(xAt(90), yAt(62.5f));
+        const juce::Point<float> end(xAt(210), yAt(58.5f));
+        f.roll.mouseDown(event(f.roll, start, held, 1));
+        f.roll.mouseDrag(event(f.roll, end, held, 1));
+        f.roll.mouseUp(event(f.roll, end, held, 1));
+        CHECK(f.note(0).isSelected());
+        CHECK(f.note(1).isSelected());
+        CHECK(!f.note(2).isSelected());
+        CHECK(near(static_cast<float>(f.roll.getScrollX()),
+                   static_cast<float>(scrollBefore), 0.5f));
+    }
+
+    // --- Batch 2 (B8): the split smart control divides the segment --------
+    {
+        Fixture f;
+        f.roll.fitPitchRangeToView(58.0f, 66.0f);
+        const auto xAt = [&f](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * f.roll.getPixelsPerSecond() -
+                   static_cast<float>(f.roll.getScrollX());
+        };
+        const auto yAt = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(f.roll.getScrollY());
+        };
+        // Hover the second segment so its smart controls appear.
+        f.roll.mouseMove(event(f.roll, {xAt(150), yAt(61.8f)}, juce::ModifierKeys(), 0));
+        // The split control sits inside the bottom-centre edge of the note:
+        // its centre is the note's bottom minus half the control plus 1px.
+        const float splitY = yAt(61.8f) + f.roll.getPixelsPerSemitone() * 0.5f -
+                             (PitchToolHandles::controlSize * 0.5f + 1.0f);
+        const auto left = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier);
+        f.roll.mouseDown(event(f.roll, {xAt(150), splitY}, left, 1));
+        f.roll.mouseUp(event(f.roll, {xAt(150), splitY}, left, 1));
+        CHECK(f.project.getNotes().size() == 4);
+        CHECK(std::abs(f.note(1).getEndFrame() - 150) <= 1); // at the click
+        CHECK(f.note(2).getStartFrame() == f.note(1).getEndFrame());
+        f.history.undo();
+        CHECK(f.project.getNotes().size() == 3);
+        CHECK(f.note(1).getEndFrame() == 200);
+    }
+
+    // --- Batch 2 (B5/B6): tilt anchor and Alt+tilt rotation -----------------
+    {
+        Fixture f;
+        f.roll.fitPitchRangeToView(58.0f, 66.0f);
+        f.roll.setShowAllSmartControls(true);
+        const auto xAt = [&f](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * f.roll.getPixelsPerSecond() -
+                   static_cast<float>(f.roll.getScrollX());
+        };
+        const auto yAt = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(f.roll.getScrollY());
+        };
+        const float ppS = f.roll.getPixelsPerSemitone();
+        const float s = PitchToolHandles::controlSize;
+        f.roll.mouseMove(event(f.roll, {xAt(150), yAt(61.8f)}, juce::ModifierKeys(), 0));
+
+        // B6: Alt+drag the TiltRight handle up one semitone rotates the
+        // contour around the centred anchor: right edge +1, left edge -1.
+        const auto altLeft = juce::ModifierKeys(juce::ModifierKeys::altModifier |
+                                                juce::ModifierKeys::leftButtonModifier);
+        const juce::Point<float> tiltRightAt(xAt(200) - s * 0.5f,
+                                             yAt(61.8f) - ppS * 0.5f - (s * 0.5f + 3.0f));
+        const auto tiltEnd = tiltRightAt + juce::Point<float>(0.0f, -ppS);
+        f.roll.mouseDown(event(f.roll, tiltRightAt, altLeft, 1));
+        f.roll.mouseDrag(event(f.roll, tiltEnd, altLeft, 1));
+        f.roll.mouseUp(event(f.roll, tiltEnd, altLeft, 1));
+        CHECK(near(f.note(1).getTiltRight(), 1.0f, 0.05f));
+        CHECK(near(f.note(1).getTiltLeft(), -1.0f, 0.05f));
+        f.history.undo();
+        CHECK(near(f.note(1).getTiltRight(), 0.0f));
+        CHECK(near(f.note(1).getTiltLeft(), 0.0f));
+
+        // B5: dragging the anchor diamond a quarter of the segment width
+        // moves the pivot to 0.75 and changes no audio parameter.
+        const auto left = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier);
+        const juce::Point<float> anchorAt(xAt(150), yAt(61.8f) - ppS * 0.5f);
+        const float quarterWidth = (xAt(200) - xAt(100)) * 0.25f;
+        const auto anchorEnd = anchorAt + juce::Point<float>(quarterWidth, 0.0f);
+        // Handles are hidden during a drag and rebuilt on hover, so move
+        // onto the control first, as a user would.
+        f.roll.mouseMove(event(f.roll, anchorAt, juce::ModifierKeys(), 0));
+        f.roll.mouseDown(event(f.roll, anchorAt, left, 1));
+        f.roll.mouseDrag(event(f.roll, anchorEnd, left, 1));
+        f.roll.mouseUp(event(f.roll, anchorEnd, left, 1));
+        CHECK(near(f.note(1).getTiltAnchor(), 0.75f, 0.03f));
+        CHECK(near(f.note(1).getTiltLeft(), 0.0f));
+        CHECK(near(f.note(1).getTiltRight(), 0.0f));
+        f.history.undo();
+        CHECK(near(f.note(1).getTiltAnchor(), 0.5f));
+    }
+
+    // --- Batch 2 (B7): straighten-range boundaries -------------------------
+    {
+        Fixture f;
+        f.roll.fitPitchRangeToView(58.0f, 66.0f);
+        f.roll.setShowAllSmartControls(true);
+        const auto xAt = [&f](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * f.roll.getPixelsPerSecond() -
+                   static_cast<float>(f.roll.getScrollX());
+        };
+        const auto yAt = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(f.roll.getScrollY());
+        };
+        const float ppS = f.roll.getPixelsPerSemitone();
+        const float s = PitchToolHandles::controlSize;
+        const auto left = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier);
+        f.roll.mouseMove(event(f.roll, {xAt(150), yAt(61.8f)}, juce::ModifierKeys(), 0));
+
+        // Dragging the left straighten-range boundary right by half the
+        // segment moves the range start to 0.5; the end stays at 1.
+        const juce::Point<float> rangeLeftAt(xAt(100),
+                                             yAt(61.8f) - ppS * 0.5f + (s * 0.5f + 2.0f));
+        const auto rangeEnd = rangeLeftAt + juce::Point<float>((xAt(200) - xAt(100)) * 0.5f, 0.0f);
+        f.roll.mouseMove(event(f.roll, rangeLeftAt, juce::ModifierKeys(), 0));
+        f.roll.mouseDown(event(f.roll, rangeLeftAt, left, 1));
+        f.roll.mouseDrag(event(f.roll, rangeEnd, left, 1));
+        f.roll.mouseUp(event(f.roll, rangeEnd, left, 1));
+        CHECK(near(f.note(1).getStraightenRangeStart(), 0.5f, 0.03f));
+        CHECK(near(f.note(1).getStraightenRangeEnd(), 1.0f));
+        f.history.undo();
+        CHECK(near(f.note(1).getStraightenRangeStart(), 0.0f));
+    }
+
+    // --- Batch 2 (B4): Alt+drag on a segment edge moves the boundary ------
+    {
+        Fixture f;
+        f.roll.fitPitchRangeToView(58.0f, 66.0f);
+        const auto xAt = [&f](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * f.roll.getPixelsPerSecond() -
+                   static_cast<float>(f.roll.getScrollX());
+        };
+        const auto yAt = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(f.roll.getScrollY());
+        };
+        const auto altLeft = juce::ModifierKeys(juce::ModifierKeys::altModifier |
+                                                juce::ModifierKeys::leftButtonModifier);
+        // The shared edge between segments 0 and 1 (frame 100): dragging it
+        // right by 20 frames moves both sides, output and source alike -
+        // frames are reassigned, never stretched.
+        const juce::Point<float> edgeAt(xAt(100) + 2.0f, yAt(61.8f));
+        const auto edgeEnd = edgeAt + juce::Point<float>(xAt(120) - xAt(100), 0.0f);
+        f.roll.mouseDown(event(f.roll, edgeAt, altLeft, 1));
+        f.roll.mouseDrag(event(f.roll, edgeEnd, altLeft, 1));
+        f.roll.mouseUp(event(f.roll, edgeEnd, altLeft, 1));
+        CHECK(f.note(0).getEndFrame() == 120);
+        CHECK(f.note(0).getSrcEndFrame() == 120);
+        CHECK(f.note(1).getStartFrame() == 120);
+        CHECK(f.note(1).getSrcStartFrame() == 120);
+        f.history.undo();
+        CHECK(f.note(0).getEndFrame() == 100);
+        CHECK(f.note(1).getStartFrame() == 100);
+
+        // Frames 200-250 belong to no segment (a gap). Segment 2's start
+        // edge can move left into the gap but not into segment 1, and the
+        // neighbour does not move.
+        const juce::Point<float> gapEdgeAt(xAt(250) + 2.0f, yAt(64.0f));
+        const auto gapEnd = gapEdgeAt + juce::Point<float>(xAt(160) - xAt(250), 0.0f);
+        f.roll.mouseDown(event(f.roll, gapEdgeAt, altLeft, 1));
+        f.roll.mouseDrag(event(f.roll, gapEnd, altLeft, 1));
+        f.roll.mouseUp(event(f.roll, gapEnd, altLeft, 1));
+        CHECK(f.note(2).getStartFrame() == 200); // clamped at segment 1's end
+        CHECK(f.note(2).getSrcStartFrame() == 200);
+        CHECK(f.note(1).getEndFrame() == 200);
+    }
+
+    // --- Batch 2 (U6): freehand pitch drawing - the stroke is the curve ---
+    {
+        // The drawing machinery works on the analysed curve (basePitch +
+        // deltaPitch) and the mel frame count, so give these fixtures the
+        // self-consistent analysis a real project would have: basePitch
+        // follows each segment's sung pitch and the mel grid exists.
+        const auto makeConsistent = [](Fixture& fx)
+        {
+            auto& audio = fx.project.getAudioData();
+            audio.melSpectrogram.assign(600, std::vector<float>(1, 0.0f));
+            for (auto& n : fx.project.getNotes())
+                for (int fr = n.getStartFrame(); fr < n.getEndFrame(); ++fr)
+                    audio.basePitch[static_cast<size_t>(fr)] = n.getMidiNote();
+        };
+        Fixture f;
+        makeConsistent(f);
+        f.roll.fitPitchRangeToView(58.0f, 66.0f);
+        f.roll.setEditMode(EditMode::PitchDrawing);
+        const auto xAt = [&f](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * f.roll.getPixelsPerSecond() -
+                   static_cast<float>(f.roll.getScrollX());
+        };
+        const auto yAt = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(f.roll.getScrollY());
+        };
+        const auto left = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier);
+        // A flat stroke two semitones above segment 1's sung pitch,
+        // covering nearly the whole segment (the preview re-centres the
+        // segment on the mean of its resulting curve).
+        f.roll.mouseDown(event(f.roll, {xAt(102), yAt(63.8f)}, left, 1));
+        f.roll.mouseDrag(event(f.roll, {xAt(150), yAt(63.8f)}, left, 1));
+        f.roll.mouseDrag(event(f.roll, {xAt(198), yAt(63.8f)}, left, 1));
+        f.roll.mouseUp(event(f.roll, {xAt(198), yAt(63.8f)}, left, 1));
+        CHECK(near(f.note(1).getMidiNote(), 63.8f, 0.15f)); // the segment followed the line
+        CHECK(f.note(1).hasBakedDeltaPitch());              // on the baked-delta model
+        CHECK(near(f.note(0).getMidiNote(), 60.3f));        // neighbours untouched
+
+        // Discarding restores the analysed state exactly.
+        f.roll.cancelPitchDrawingPreview();
+        CHECK(near(f.note(1).getMidiNote(), 61.8f));
+        CHECK(!f.note(1).hasBakedDeltaPitch());
+
+        // Draw again and confirm: one undo step restores the original.
+        f.roll.mouseDown(event(f.roll, {xAt(102), yAt(63.8f)}, left, 1));
+        f.roll.mouseDrag(event(f.roll, {xAt(198), yAt(63.8f)}, left, 1));
+        f.roll.mouseUp(event(f.roll, {xAt(198), yAt(63.8f)}, left, 1));
+        auto* panel = findChildren<PitchDrawingConfirmationPanel>(f.roll).front();
+        CHECK(panel != nullptr && panel->onApply != nullptr);
+        panel->onApply();
+        CHECK(near(f.note(1).getMidiNote(), 63.8f, 0.15f));
+        CHECK(f.history.canUndo());
+        f.history.undo();
+        CHECK(near(f.note(1).getMidiNote(), 61.8f));
+        CHECK(!f.note(1).hasBakedDeltaPitch());
+        f.history.redo();
+        CHECK(near(f.note(1).getMidiNote(), 63.8f, 0.15f));
+
+        // A stroke that crosses the gap (frames 200-250 own no segment)
+        // breaks there: it still reaches segment 2, but segment 0 and the
+        // already-drawn segment 1 keep their curves.
+        Fixture g;
+        makeConsistent(g);
+        g.roll.fitPitchRangeToView(58.0f, 66.0f);
+        g.roll.setEditMode(EditMode::PitchDrawing);
+        const auto gxAt = [&g](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * g.roll.getPixelsPerSecond() -
+                   static_cast<float>(g.roll.getScrollX());
+        };
+        const auto gyAt = [&g](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * g.roll.getPixelsPerSemitone() +
+                   g.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(g.roll.getScrollY());
+        };
+        g.roll.mouseDown(event(g.roll, {gxAt(190), gyAt(63.8f)}, left, 1));
+        g.roll.mouseDrag(event(g.roll, {gxAt(225), gyAt(65.0f)}, left, 1)); // over the gap
+        g.roll.mouseDrag(event(g.roll, {gxAt(260), gyAt(66.0f)}, left, 1));
+        g.roll.mouseUp(event(g.roll, {gxAt(260), gyAt(66.0f)}, left, 1));
+        CHECK(g.note(2).getMidiNote() > 64.2f);   // pulled toward the line
+        CHECK(g.note(2).getMidiNote() < 64.9f);   // only its head was drawn
+        CHECK(near(g.note(0).getMidiNote(), 60.3f));
+
+        // A stroke that starts in the gap starts nothing.
+        Fixture h;
+        makeConsistent(h);
+        h.roll.fitPitchRangeToView(58.0f, 66.0f);
+        h.roll.setEditMode(EditMode::PitchDrawing);
+        const auto hxAt = [&h](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * h.roll.getPixelsPerSecond() -
+                   static_cast<float>(h.roll.getScrollX());
+        };
+        const auto hyAt = [&h](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * h.roll.getPixelsPerSemitone() +
+                   h.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(h.roll.getScrollY());
+        };
+        h.roll.mouseDown(event(h.roll, {hxAt(225), hyAt(64.0f)}, left, 1));
+        h.roll.mouseDrag(event(h.roll, {hxAt(260), hyAt(66.0f)}, left, 1));
+        h.roll.mouseUp(event(h.roll, {hxAt(260), hyAt(66.0f)}, left, 1));
+        CHECK(near(h.note(2).getMidiNote(), 64.0f));
+        CHECK(!h.note(2).hasBakedDeltaPitch());
     }
 
     // --- Drag feedback: the whole segment, then a short silent gap ---------
