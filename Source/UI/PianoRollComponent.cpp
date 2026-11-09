@@ -3224,24 +3224,16 @@ bool PianoRollComponent::nudgeSelectedNotesToNextPitch(int direction)
     return false;
 
   const float reference = ScaleUtils::getReferenceOffsetSemitones(pitchReferenceHz);
-  const ScaleMode mode = project->getPreferredScaleMode();
-  const int root = project->getScaleRootNote();
-  const bool useScale = project->getDragSnapMode() == DragSnapMode::Scale &&
-                        mode != ScaleMode::None && mode != ScaleMode::Chromatic &&
-                        root >= 0;
   return shiftNotesBySemitones(
       project->getSelectedNotes(),
       [=](const Note &note)
       {
-        // Absolute: step from the nearest semitone (or scale tone) so the
-        // segment lands exactly on the next one.
+        // Absolute (batch 2, B12): step from the nearest semitone so the
+        // segment lands exactly on the next semitone, whatever the
+        // project's scale-snap preference says.
         const float adjusted = note.getAdjustedMidiNote();
-        int target = static_cast<int>(std::round(adjusted - reference)) + direction;
-        if (useScale)
-          for (int guard = 0; guard < 12 &&
-                              !ScaleUtils::isPitchClassInScale(mode, target, root);
-               ++guard)
-            target += direction;
+        const int target =
+            static_cast<int>(std::round(adjusted - reference)) + direction;
         return std::optional<float>(static_cast<float>(target) + reference - adjusted);
       });
 }

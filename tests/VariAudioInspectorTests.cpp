@@ -295,6 +295,44 @@ int main()
         f.roll.mouseUp(event(f.roll, {x, y}, shiftCtrlClick, 1));
     }
 
+    // --- Batch 2 (B12): Absolute snap is semitones only, even in Scale mode -
+    {
+        Fixture f;
+        f.project.setProjectKey(0, ScaleMode::Major); // C major
+        f.roll.setDragSnapMode(DragSnapMode::Scale);
+        f.note(0).setSelected(true); // sung at 60.3
+        // Arrow up (Absolute): the next semitone is C# (61), not the next
+        // C-major scale tone D (62).
+        CHECK(f.roll.keyPressed(juce::KeyPress(juce::KeyPress::upKey)));
+        CHECK(near(f.note(0).getMidiNote(), 61.0f));
+        f.history.undo();
+        CHECK(near(f.note(0).getMidiNote(), 60.3f));
+
+        // An Absolute drag also lands on the semitone grid: the raw target
+        // 61.1 becomes C# (61), not the nearest scale tone D (62).
+        f.roll.fitPitchRangeToView(56.0f, 68.0f);
+        const auto held = juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier);
+        const auto xAt = [&f](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * f.roll.getPixelsPerSecond() -
+                   static_cast<float>(f.roll.getScrollX());
+        };
+        const auto yAt = [&f](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * f.roll.getPixelsPerSemitone() +
+                   f.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(f.roll.getScrollY());
+        };
+        const juce::Point<float> start(xAt(50), yAt(60.3f));
+        const auto end = start + juce::Point<float>(0.0f, -0.8f * f.roll.getPixelsPerSemitone());
+        f.roll.mouseDown(event(f.roll, start, held, 1));
+        f.roll.mouseDrag(event(f.roll, start + juce::Point<float>(0.0f, -3.0f), held, 1));
+        f.roll.mouseDrag(event(f.roll, end, held, 1));
+        f.roll.mouseUp(event(f.roll, end, held, 1));
+        CHECK(near(f.note(0).getMidiNote(), 61.0f));
+    }
+
     // --- Option/Alt: vertical zoom only (wheel and drag) -------------------
     {
         Fixture f;

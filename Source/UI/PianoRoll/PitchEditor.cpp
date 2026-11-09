@@ -62,13 +62,11 @@ float PitchEditor::resolveDragOffset(float rawOffsetSemitones,
       return getSnappedDragOffset(rawOffsetSemitones, anchorMidiNote);
     case DragSnapKind::Absolute:
     {
+      // VariAudio semantics (batch 2, B12): Absolute snap lands on semitones
+      // only. Snapping to scale tones belongs to the Relative path (the
+      // inspector's Chromatic/Scale choice) and must not leak in here.
       const float raw = anchorMidiNote + rawOffsetSemitones;
-      const bool useScale = dragSnapMode == DragSnapMode::Scale && project;
-      const float target =
-          useScale ? ScaleUtils::snapMidiToScale(raw, project->getPreferredScaleMode(),
-                                                 project->getScaleRootNote(),
-                                                 pitchReferenceHz)
-                   : ScaleUtils::snapMidiToSemitone(raw, pitchReferenceHz);
+      const float target = ScaleUtils::snapMidiToSemitone(raw, pitchReferenceHz);
       return target - anchorMidiNote;
     }
   }
