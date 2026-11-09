@@ -10,6 +10,15 @@
 #include <cmath>
 #include <limits>
 
+// Batch 2 (U6): freehand pitch drawing. The previous interaction placed
+// draggable anchors and interpolated between them with a smootherstep,
+// which users found fiddly ("かなりクセがあって使いづらかった"). Now the
+// pointer's trajectory itself is written into the preview curve while
+// dragging; the downstream model is unchanged - on Apply the drawn curve
+// is baked into each note's bakedDeltaPitch through the same
+// PitchDrawingAction as before, so undo and rendering behave exactly as
+// they did for anchor drawings.
+
 PitchDrawingHandler::PitchDrawingHandler(PianoRollComponent& owner)
     : InteractionHandler(owner)
 {
@@ -24,43 +33,15 @@ bool PitchDrawingHandler::mouseDown(const juce::MouseEvent& e, float worldX,
   if (!e.mods.isLeftButtonDown() || !owner_.project)
     return false;
 
-  const int hitId = hitTest(worldX, worldY);
-  if (hitId >= 0)
-  {
-    activeAnchorId = hitId;
-    hoveredAnchorId = hitId;
-    dragging = true;
-    dragMoved = false;
-    owner_.repaint();
-    return true;
-  }
-
   if (!isPitchRegionAtWorldX(worldX))
     return false;
-  const int frame = frameFromWorldX(worldX);
 
   captureOriginalCurveIfNeeded();
-  const float midi = midiFromWorldY(worldY);
-
-  auto sameFrame = std::find_if(anchors.begin(), anchors.end(),
-                                [frame](const Anchor& anchor)
-                                { return anchor.frame == frame; });
-  if (sameFrame != anchors.end())
-  {
-    sameFrame->midi = midi;
-    activeAnchorId = sameFrame->id;
-  }
-  else
-  {
-    anchors.push_back({nextAnchorId++, frame, midi});
-    activeAnchorId = anchors.back().id;
-  }
-
-  hoveredAnchorId = activeAnchorId;
-  dragging = true;
+  strokeActive = true;
   dragMoved = false;
-  sortAnchors();
-  rebuildPreview();
+  lastStrokeFrame = -1;
+  writeStrokePoint(frameFromWorldX(worldX), midiFromWorldY(worldY));
+  updateAffectedNotePositions();
   applyPreviewToProject();
   notifyStateChanged();
   return true;
@@ -69,34 +50,11 @@ bool PitchDrawingHandler::mouseDown(const juce::MouseEvent& e, float worldX,
 bool PitchDrawingHandler::mouseDrag(const juce::MouseEvent&, float worldX,
                               float worldY)
 {
-  if (!dragging)
+  if (!strokeActive)
     return false;
 
-  auto* anchor = findAnchorById(activeAnchorId);
-  if (!anchor || !owner_.project)
-    return false;
-
-  int newFrame = frameFromWorldX(worldX);
-  const auto current = std::find_if(anchors.begin(), anchors.end(),
-                                    [this](const Anchor& item)
-                                    { return item.id == activeAnchorId; });
-  if (current != anchors.end())
-  {
-    if (current != anchors.begin())
-      newFrame = std::max(newFrame, std::prev(current)->frame + 1);
-    if (std::next(current) != anchors.end())
-      newFrame = std::min(newFrame, std::next(current)->frame - 1);
-  }
-
-  newFrame = juce::jlimit(0,
-                          static_cast<int>(owner_.project->getAudioData().f0.size()) - 1,
-                          newFrame);
-  if (frameBelongsToPitchNote(newFrame))
-    anchor->frame = newFrame;
-  anchor->midi = midiFromWorldY(worldY);
-
-  sortAnchors();
-  rebuildPreview();
+  writeStrokePoint(frameFromWorldX(worldX), midiFromWorldY(worldY));
+  updateAffectedNotePositions();
   dragMoved = true;
   owner_.repaint();
   return true;
@@ -104,33 +62,33 @@ bool PitchDrawingHandler::mouseDrag(const juce::MouseEvent&, float worldX,
 
 bool PitchDrawingHandler::mouseUp(const juce::MouseEvent&, float, float)
 {
-  if (!dragging)
+  if (!strokeActive)
     return false;
-  dragging = false;
-  activeAnchorId = -1;
+  strokeActive = false;
+  lastStrokeFrame = -1;
   if (dragMoved)
+  {
+    // Light smoothing once the stroke lands, feathered at the span ends
+    // so the joins with the untouched curve stay click-free.
+    smoothStrokeSpan();
+    updateAffectedNotePositions();
     applyPreviewToProject();
+  }
   dragMoved = false;
   owner_.repaint();
   return true;
 }
 
 void PitchDrawingHandler::mouseMove(const juce::MouseEvent&, float worldX,
-                              float worldY)
+                              float)
 {
-  const int newHovered = hitTest(worldX, worldY);
-  const bool newPointerOverPitchRegion =
-      isPitchRegionAtWorldX(worldX);
-  if (newHovered == hoveredAnchorId &&
-      newPointerOverPitchRegion == pointerOverPitchRegion)
+  const bool newPointerOverPitchRegion = isPitchRegionAtWorldX(worldX);
+  if (newPointerOverPitchRegion == pointerOverPitchRegion)
     return;
-  hoveredAnchorId = newHovered;
   pointerOverPitchRegion = newPointerOverPitchRegion;
-  owner_.setMouseCursor(
-      newHovered >= 0
-          ? juce::MouseCursor::DraggingHandCursor
-          : (pointerOverPitchRegion ? juce::MouseCursor::CrosshairCursor
-                                    : juce::MouseCursor::NormalCursor));
+  owner_.setMouseCursor(pointerOverPitchRegion
+                            ? juce::MouseCursor::CrosshairCursor
+                            : juce::MouseCursor::NormalCursor);
   owner_.repaint();
 }
 
@@ -142,26 +100,52 @@ void PitchDrawingHandler::mouseDoubleClick(const juce::MouseEvent&, float worldX
 
 bool PitchDrawingHandler::removeAnchorAt(float worldX, float worldY)
 {
-  const int hitId = hitTest(worldX, worldY);
-  if (hitId < 0)
+  // Freehand equivalent of removing an anchor: erase the drawn curve
+  // around the click back to the original curve.
+  if (previewMidiCurve.empty() || editedStartFrame < 0)
     return false;
 
-  anchors.erase(std::remove_if(anchors.begin(), anchors.end(),
-                               [hitId](const Anchor& anchor)
-                               { return anchor.id == hitId; }),
-                anchors.end());
-  hoveredAnchorId = -1;
-  activeAnchorId = -1;
-  dragging = false;
-  dragMoved = false;
+  const int frame = frameFromWorldX(worldX);
+  constexpr int eraseRadius = 10;
+  const int from = std::max(editedStartFrame, frame - eraseRadius);
+  const int to = std::min(editedEndFrame, frame + eraseRadius);
+  bool erased = false;
+  for (int f = from; f <= to; ++f)
+  {
+    if (previewMidiCurve[static_cast<size_t>(f)] !=
+        originalMidiCurve[static_cast<size_t>(f)])
+    {
+      previewMidiCurve[static_cast<size_t>(f)] =
+          originalMidiCurve[static_cast<size_t>(f)];
+      erased = true;
+    }
+  }
+  if (!erased)
+    return false;
 
-  if (anchors.empty())
+  // Shrink the edited span to what is still drawn; erasing everything is
+  // the same as discarding the drawing.
+  int newStart = -1;
+  int newEnd = -1;
+  for (int f = editedStartFrame; f <= editedEndFrame; ++f)
+  {
+    if (previewMidiCurve[static_cast<size_t>(f)] !=
+        originalMidiCurve[static_cast<size_t>(f)])
+    {
+      if (newStart < 0)
+        newStart = f;
+      newEnd = f;
+    }
+  }
+  if (newStart < 0)
   {
     clearState(true);
     return true;
   }
+  editedStartFrame = newStart;
+  editedEndFrame = newEnd;
 
-  rebuildPreview();
+  updateAffectedNotePositions();
   applyPreviewToProject();
   pointerOverPitchRegion = isPitchRegionAtWorldX(worldX);
   owner_.setMouseCursor(pointerOverPitchRegion
@@ -173,38 +157,22 @@ bool PitchDrawingHandler::removeAnchorAt(float worldX, float worldY)
 
 void PitchDrawingHandler::clearHover()
 {
-  if (hoveredAnchorId < 0 || dragging)
-    return;
-  hoveredAnchorId = -1;
-  owner_.repaint();
+  if (pointerOverPitchRegion)
+  {
+    pointerOverPitchRegion = false;
+    owner_.repaint();
+  }
 }
 
-void PitchDrawingHandler::draw(juce::Graphics& g)
+void PitchDrawingHandler::draw(juce::Graphics&)
 {
-  constexpr float radius = 5.0f;
-  for (const auto& anchor : anchors)
-  {
-    const auto point = anchorPosition(anchor);
-    const auto circle = juce::Rectangle<float>(point.x - radius, point.y - radius,
-                                               radius * 2.0f, radius * 2.0f);
-    const bool highlighted = anchor.id == hoveredAnchorId ||
-                             anchor.id == activeAnchorId;
-    g.setColour(APP_COLOR_PITCH_CURVE);
-    if (highlighted)
-      g.fillEllipse(circle);
-    else
-    {
-      g.setColour(APP_COLOR_BACKGROUND);
-      g.fillEllipse(circle);
-      g.setColour(APP_COLOR_PITCH_CURVE);
-      g.drawEllipse(circle, 1.5f);
-    }
-  }
+  // Nothing to draw: the piano roll renders the preview curve itself
+  // through its midiCurveOverride, and freehand strokes have no anchors.
 }
 
 bool PitchDrawingHandler::isActive() const
 {
-  return dragging || !anchors.empty();
+  return strokeActive || editedStartFrame >= 0;
 }
 
 void PitchDrawingHandler::cancel()
@@ -218,15 +186,15 @@ void PitchDrawingHandler::clearState(bool restoreNoteStates)
   {
     restoreOriginalNoteStates(true);
   }
-  anchors.clear();
   originalNoteStates.clear();
   originalMidiCurve.clear();
   previewMidiCurve.clear();
-  hoveredAnchorId = -1;
-  pointerOverPitchRegion = false;
-  activeAnchorId = -1;
-  dragging = false;
+  editedStartFrame = -1;
+  editedEndFrame = -1;
+  strokeActive = false;
   dragMoved = false;
+  lastStrokeFrame = -1;
+  pointerOverPitchRegion = false;
   previewDirtyStart = -1;
   previewDirtyEnd = -1;
   notifyStateChanged();
@@ -234,11 +202,11 @@ void PitchDrawingHandler::clearState(bool restoreNoteStates)
 
 bool PitchDrawingHandler::apply()
 {
-  if (!owner_.project || anchors.empty() || previewMidiCurve.empty())
+  if (!owner_.project || editedStartFrame < 0 || previewMidiCurve.empty())
     return false;
 
-  const int firstFrame = anchors.front().frame;
-  const int lastFrame = anchors.back().frame;
+  const int firstFrame = editedStartFrame;
+  const int lastFrame = editedEndFrame;
   auto& project = *owner_.project;
   std::vector<PitchDrawingNoteState> before;
   std::vector<PitchDrawingNoteState> after;
@@ -299,41 +267,6 @@ float PitchDrawingHandler::midiFromWorldY(float worldY) const
                       static_cast<float>(MAX_MIDI_NOTE), midi);
 }
 
-juce::Point<float> PitchDrawingHandler::anchorPosition(const Anchor& anchor) const
-{
-  const float globalOffset = owner_.project
-                                 ? owner_.project->getGlobalPitchOffset()
-                                 : 0.0f;
-  return {owner_.timeToX(framesToSeconds(anchor.frame)),
-          owner_.midiToY(anchor.midi + globalOffset) +
-              owner_.pixelsPerSemitone * 0.5f};
-}
-
-int PitchDrawingHandler::hitTest(float worldX, float worldY) const
-{
-  constexpr float hitRadius = 8.0f;
-  for (auto it = anchors.rbegin(); it != anchors.rend(); ++it)
-  {
-    if (anchorPosition(*it).getDistanceFrom({worldX, worldY}) <= hitRadius)
-      return it->id;
-  }
-  return -1;
-}
-
-PitchDrawingHandler::Anchor* PitchDrawingHandler::findAnchorById(int id)
-{
-  auto it = std::find_if(anchors.begin(), anchors.end(),
-                         [id](const Anchor& anchor) { return anchor.id == id; });
-  return it == anchors.end() ? nullptr : &*it;
-}
-
-const PitchDrawingHandler::Anchor* PitchDrawingHandler::findAnchorById(int id) const
-{
-  auto it = std::find_if(anchors.begin(), anchors.end(),
-                         [id](const Anchor& anchor) { return anchor.id == id; });
-  return it == anchors.end() ? nullptr : &*it;
-}
-
 bool PitchDrawingHandler::frameBelongsToPitchNote(int frame) const
 {
   if (!owner_.project)
@@ -383,57 +316,98 @@ void PitchDrawingHandler::captureOriginalCurveIfNeeded()
           {&note, TransformParams::fromNote(note), note.getBakedDeltaPitch()});
 }
 
-void PitchDrawingHandler::sortAnchors()
+void PitchDrawingHandler::writeStrokePoint(int frame, float midi)
 {
-  std::sort(anchors.begin(), anchors.end(),
-            [](const Anchor& a, const Anchor& b) { return a.frame < b.frame; });
-}
-
-void PitchDrawingHandler::rebuildPreview()
-{
-  previewMidiCurve = originalMidiCurve;
-  if (anchors.empty() || previewMidiCurve.empty())
+  if (previewMidiCurve.empty() ||
+      frame < 0 || frame >= static_cast<int>(previewMidiCurve.size()))
     return;
 
-  if (anchors.size() == 1)
+  const auto plot = [this](int f, float value)
   {
-    previewMidiCurve[static_cast<size_t>(anchors.front().frame)] =
-        anchors.front().midi;
-    updateAffectedNotePositions();
-    return;
-  }
+    previewMidiCurve[static_cast<size_t>(f)] = value;
+    editedStartFrame = editedStartFrame < 0 ? f : std::min(editedStartFrame, f);
+    editedEndFrame = std::max(editedEndFrame, f);
+  };
 
-  for (size_t segment = 1; segment < anchors.size(); ++segment)
+  // Interpolate between the previous plotted point and this one so a fast
+  // stroke has no holes. Frames that belong to no note (the gaps between
+  // segments) are skipped: the stroke breaks there instead of drawing a
+  // line across silence, and the next in-note point starts a new chain.
+  if (lastStrokeFrame >= 0 && frame != lastStrokeFrame)
   {
-    const auto& left = anchors[segment - 1];
-    const auto& right = anchors[segment];
-    const int length = std::max(1, right.frame - left.frame);
-    for (int frame = left.frame; frame <= right.frame; ++frame)
+    const int step = frame > lastStrokeFrame ? 1 : -1;
+    for (int f = lastStrokeFrame + step;; f += step)
     {
-      const float t = static_cast<float>(frame - left.frame) /
-                      static_cast<float>(length);
-      // Quintic smootherstep: flat at both anchors, with a steeper transition
-      // through the middle than linear interpolation.
-      const float shapedT = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
-      previewMidiCurve[static_cast<size_t>(frame)] =
-          juce::jmap(shapedT, left.midi, right.midi);
+      if (frameBelongsToPitchNote(f))
+      {
+        const float t = static_cast<float>(f - lastStrokeFrame) /
+                        static_cast<float>(frame - lastStrokeFrame);
+        plot(f, juce::jmap(t, lastStrokeMidi, midi));
+      }
+      if (f == frame)
+        break;
     }
   }
+  else if (frameBelongsToPitchNote(frame))
+  {
+    plot(frame, midi);
+  }
 
-  updateAffectedNotePositions();
+  if (frameBelongsToPitchNote(frame))
+  {
+    lastStrokeFrame = frame;
+    lastStrokeMidi = midi;
+  }
+}
+
+void PitchDrawingHandler::smoothStrokeSpan()
+{
+  if (previewMidiCurve.empty() || editedStartFrame < 0)
+    return;
+
+  const auto drawn = previewMidiCurve;
+  constexpr int radius = 2;
+  for (int f = editedStartFrame; f <= editedEndFrame; ++f)
+  {
+    if (!frameBelongsToPitchNote(f))
+      continue;
+    double sum = 0.0;
+    int count = 0;
+    for (int k = -radius; k <= radius; ++k)
+    {
+      const int idx = f + k;
+      if (idx < editedStartFrame || idx > editedEndFrame ||
+          !frameBelongsToPitchNote(idx))
+        continue;
+      sum += drawn[static_cast<size_t>(idx)];
+      ++count;
+    }
+    if (count == 0)
+      continue;
+    const float smoothed = static_cast<float>(sum / static_cast<double>(count));
+    // Full smoothing in the interior; the first and last few frames blend
+    // back to the drawn values so the stroke's ends are preserved exactly.
+    const int edgeDistance = std::min(f - editedStartFrame,
+                                      editedEndFrame - f);
+    const float blend = juce::jlimit(
+        0.0f, 1.0f,
+        static_cast<float>(edgeDistance) / static_cast<float>(radius * 2));
+    previewMidiCurve[static_cast<size_t>(f)] =
+        juce::jmap(blend, drawn[static_cast<size_t>(f)], smoothed);
+  }
 }
 
 void PitchDrawingHandler::updateAffectedNotePositions()
 {
-  if (!owner_.project || anchors.empty() || previewMidiCurve.empty())
+  if (!owner_.project || editedStartFrame < 0 || previewMidiCurve.empty())
     return;
 
-  // Start from the exact pre-anchor positions on every preview update, so
-  // dragging an anchor or shrinking its range cannot accumulate movement.
+  // Start from the exact pre-drawing positions on every preview update, so
+  // extending or erasing a stroke cannot accumulate movement.
   restoreOriginalNoteStates(false);
 
-  const int firstFrame = anchors.front().frame;
-  const int lastFrame = anchors.back().frame;
+  const int firstFrame = editedStartFrame;
+  const int lastFrame = editedEndFrame;
   const auto& audioData = owner_.project->getAudioData();
 
   for (auto& note : owner_.project->getNotes())
@@ -469,11 +443,11 @@ void PitchDrawingHandler::updateAffectedNotePositions()
 
 void PitchDrawingHandler::applyPreviewToProject()
 {
-  if (!owner_.project || anchors.empty() || previewMidiCurve.empty())
+  if (!owner_.project || editedStartFrame < 0 || previewMidiCurve.empty())
     return;
 
-  const int firstFrame = anchors.front().frame;
-  const int lastFrame = anchors.back().frame;
+  const int firstFrame = editedStartFrame;
+  const int lastFrame = editedEndFrame;
   auto& project = *owner_.project;
   auto& audioData = project.getAudioData();
   std::vector<Note*> affected;

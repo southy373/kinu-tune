@@ -24,8 +24,13 @@ public:
   bool isActive() const override;
   void cancel() override;
 
-  bool hasAnchors() const { return !anchors.empty(); }
-  bool isHoveringAnchor() const { return hoveredAnchorId >= 0; }
+  // Batch 2 (U6): the anchor-based interaction was replaced by freehand
+  // strokes - the pointer's own trajectory becomes the pitch curve. The
+  // method names below predate that change and are kept because the piano
+  // roll and the confirmation panel call them: "anchors" now simply means
+  // "an unconfirmed drawing exists".
+  bool hasAnchors() const { return editedStartFrame >= 0; }
+  bool isHoveringAnchor() const { return false; }
   bool isPointerOverPitchRegion() const { return pointerOverPitchRegion; }
   bool isPitchRegionAtWorldX(float worldX) const;
   bool removeAnchorAt(float worldX, float worldY);
@@ -35,13 +40,6 @@ public:
   bool apply();
 
 private:
-  struct Anchor
-  {
-    int id = 0;
-    int frame = 0;
-    float midi = 60.0f;
-  };
-
   struct OriginalNoteState
   {
     Note* note = nullptr;
@@ -51,14 +49,10 @@ private:
 
   int frameFromWorldX(float worldX) const;
   float midiFromWorldY(float worldY) const;
-  juce::Point<float> anchorPosition(const Anchor& anchor) const;
-  int hitTest(float worldX, float worldY) const;
-  Anchor* findAnchorById(int id);
-  const Anchor* findAnchorById(int id) const;
   bool frameBelongsToPitchNote(int frame) const;
   void captureOriginalCurveIfNeeded();
-  void sortAnchors();
-  void rebuildPreview();
+  void writeStrokePoint(int frame, float midi);
+  void smoothStrokeSpan();
   void updateAffectedNotePositions();
   void applyPreviewToProject();
   void restoreOriginalNoteStates(bool requestRender);
@@ -66,15 +60,18 @@ private:
   void clearState(bool restoreNoteStates);
   void notifyStateChanged();
 
-  std::vector<Anchor> anchors;
   std::vector<OriginalNoteState> originalNoteStates;
   std::vector<float> originalMidiCurve;
   std::vector<float> previewMidiCurve;
-  int nextAnchorId = 1;
-  int hoveredAnchorId = -1;
-  int activeAnchorId = -1;
-  bool dragging = false;
+  // Span of frames the strokes have actually drawn on (-1 = no drawing).
+  int editedStartFrame = -1;
+  int editedEndFrame = -1;
+  bool strokeActive = false;
   bool dragMoved = false;
+  // Last plotted point of the current stroke; -1 while the pointer is over
+  // a gap, so no line is ever drawn across unowned frames.
+  int lastStrokeFrame = -1;
+  float lastStrokeMidi = 0.0f;
   bool pointerOverPitchRegion = false;
   int previewDirtyStart = -1;
   int previewDirtyEnd = -1;
