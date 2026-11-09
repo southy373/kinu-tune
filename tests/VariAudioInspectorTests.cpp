@@ -747,6 +747,43 @@ int main()
         h.roll.mouseUp(event(h.roll, {hxAt(260), hyAt(66.0f)}, left, 1));
         CHECK(near(h.note(2).getMidiNote(), 64.0f));
         CHECK(!h.note(2).hasBakedDeltaPitch());
+
+        // A deleted segment is outside editing: a stroke that starts on
+        // it starts nothing, and a stroke that crosses it breaks there
+        // exactly as it breaks across the gap - the segment keeps its
+        // analysed pitch and gains no baked delta.
+        Fixture d;
+        makeConsistent(d);
+        d.note(1).setDeleted(true);
+        d.roll.fitPitchRangeToView(58.0f, 66.0f);
+        d.roll.setEditMode(EditMode::PitchDrawing);
+        const auto dxAt = [&d](int frame)
+        {
+            return PianoRollComponent::pianoKeysWidth +
+                   static_cast<float>(framesToSeconds(frame)) * d.roll.getPixelsPerSecond() -
+                   static_cast<float>(d.roll.getScrollX());
+        };
+        const auto dyAt = [&d](float midi)
+        {
+            return PianoRollComponent::headerHeight +
+                   (MAX_MIDI_NOTE - midi) * d.roll.getPixelsPerSemitone() +
+                   d.roll.getPixelsPerSemitone() * 0.5f - static_cast<float>(d.roll.getScrollY());
+        };
+        d.roll.mouseDown(event(d.roll, {dxAt(150), dyAt(63.8f)}, left, 1));
+        d.roll.mouseDrag(event(d.roll, {dxAt(260), dyAt(66.0f)}, left, 1));
+        d.roll.mouseUp(event(d.roll, {dxAt(260), dyAt(66.0f)}, left, 1));
+        CHECK(near(d.note(1).getMidiNote(), 61.8f));
+        CHECK(!d.note(1).hasBakedDeltaPitch());
+        CHECK(near(d.note(2).getMidiNote(), 64.0f));
+        CHECK(!d.note(2).hasBakedDeltaPitch());
+        // Crossing from segment 0 into the deleted segment draws
+        // segment 0 only.
+        d.roll.mouseDown(event(d.roll, {dxAt(50), dyAt(62.3f)}, left, 1));
+        d.roll.mouseDrag(event(d.roll, {dxAt(150), dyAt(62.3f)}, left, 1));
+        d.roll.mouseUp(event(d.roll, {dxAt(150), dyAt(62.3f)}, left, 1));
+        CHECK(d.note(0).hasBakedDeltaPitch());
+        CHECK(near(d.note(1).getMidiNote(), 61.8f));
+        CHECK(!d.note(1).hasBakedDeltaPitch());
     }
 
     // --- Drag feedback: the whole segment, then a short silent gap ---------

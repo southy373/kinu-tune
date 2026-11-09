@@ -49,6 +49,11 @@ private:
 
   int frameFromWorldX(float worldX) const;
   float midiFromWorldY(float worldY) const;
+  // The note a frame can be drawn on: an editable segment (not a rest,
+  // not a deleted segment - deleted segments are outside editing and a
+  // stroke must break across them exactly as it breaks across a gap).
+  // nullptr when the frame belongs to no such note.
+  const Note* pitchNoteAtFrame(int frame) const;
   bool frameBelongsToPitchNote(int frame) const;
   void captureOriginalCurveIfNeeded();
   void writeStrokePoint(int frame, float midi);

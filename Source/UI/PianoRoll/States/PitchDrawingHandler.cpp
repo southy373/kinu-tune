@@ -213,7 +213,7 @@ bool PitchDrawingHandler::apply()
 
   for (auto& note : project.getNotes())
   {
-    if (note.isRest() || note.getEndFrame() <= firstFrame ||
+    if (note.isRestOrDeleted() || note.getEndFrame() <= firstFrame ||
         note.getStartFrame() > lastFrame)
       continue;
 
@@ -267,17 +267,22 @@ float PitchDrawingHandler::midiFromWorldY(float worldY) const
                       static_cast<float>(MAX_MIDI_NOTE), midi);
 }
 
-bool PitchDrawingHandler::frameBelongsToPitchNote(int frame) const
+const Note* PitchDrawingHandler::pitchNoteAtFrame(int frame) const
 {
   if (!owner_.project)
-    return false;
-  return std::any_of(owner_.project->getNotes().begin(),
-                     owner_.project->getNotes().end(),
-                     [frame](const Note& note)
-                     {
-                       return !note.isRest() && note.getStartFrame() <= frame &&
-                              note.getEndFrame() > frame;
-                     });
+    return nullptr;
+  for (const auto& note : owner_.project->getNotes())
+  {
+    if (!note.isRestOrDeleted() && note.getStartFrame() <= frame &&
+        note.getEndFrame() > frame)
+      return &note;
+  }
+  return nullptr;
+}
+
+bool PitchDrawingHandler::frameBelongsToPitchNote(int frame) const
+{
+  return pitchNoteAtFrame(frame) != nullptr;
 }
 
 bool PitchDrawingHandler::isPitchRegionAtWorldX(float worldX) const
@@ -311,7 +316,7 @@ void PitchDrawingHandler::captureOriginalCurveIfNeeded()
   originalNoteStates.clear();
   originalNoteStates.reserve(owner_.project->getNotes().size());
   for (auto& note : owner_.project->getNotes())
-    if (!note.isRest())
+    if (!note.isRestOrDeleted())
       originalNoteStates.push_back(
           {&note, TransformParams::fromNote(note), note.getBakedDeltaPitch()});
 }
@@ -412,7 +417,7 @@ void PitchDrawingHandler::updateAffectedNotePositions()
 
   for (auto& note : owner_.project->getNotes())
   {
-    if (note.isRest() || note.getEndFrame() <= firstFrame ||
+    if (note.isRestOrDeleted() || note.getEndFrame() <= firstFrame ||
         note.getStartFrame() > lastFrame)
       continue;
 
@@ -454,7 +459,7 @@ void PitchDrawingHandler::applyPreviewToProject()
 
   for (auto& note : project.getNotes())
   {
-    if (note.isRest() || note.getEndFrame() <= firstFrame ||
+    if (note.isRestOrDeleted() || note.getEndFrame() <= firstFrame ||
         note.getStartFrame() > lastFrame)
       continue;
 
