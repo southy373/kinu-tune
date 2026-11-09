@@ -374,15 +374,21 @@ void PitchDrawingHandler::smoothStrokeSpan()
   constexpr int radius = 2;
   for (int f = editedStartFrame; f <= editedEndFrame; ++f)
   {
-    if (!frameBelongsToPitchNote(f))
+    const Note* owner = pitchNoteAtFrame(f);
+    if (owner == nullptr)
       continue;
     double sum = 0.0;
     int count = 0;
     for (int k = -radius; k <= radius; ++k)
     {
       const int idx = f + k;
+      // The kernel must not reach across a note boundary: two segments
+      // can sit directly against each other with no gap, and averaging
+      // the neighbour's curve into this note's last frames (or the
+      // reverse) bends both joins. Only frames owned by the same note
+      // as f take part.
       if (idx < editedStartFrame || idx > editedEndFrame ||
-          !frameBelongsToPitchNote(idx))
+          pitchNoteAtFrame(idx) != owner)
         continue;
       sum += drawn[static_cast<size_t>(idx)];
       ++count;
