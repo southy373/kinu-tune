@@ -91,7 +91,7 @@ jobs:
         run: |
           $product = if ($env:DEV_BUILD -eq "true") { "FlexaTune" } else { "Kinu Tune" }
           $version = "$env:RELEASE_TAG".TrimStart('v')
-          $prefix = if ($env:DEV_BUILD -eq "true") { "Pure-Tune" } else { "Kinu-Tune" }
+          $prefix = if ($env:DEV_BUILD -eq "true") { "FlexaTune" } else { "Kinu-Tune" }
           $name = "$prefix-$version-Windows-x64"
           New-Item -ItemType Directory -Force -Path "$name/models", "$name/licenses" | Out-Null
           Copy-Item -Recurse "build/PitchNetPlugin_artefacts/Release/VST3/$product.vst3" "$name/"

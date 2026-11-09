@@ -8,7 +8,7 @@ on:
         description: "Release tag (for Kinu Tune) or version (for FlexaTune)"
         required: true
         default: "v0.1.4"
-      pure_tune:
+      flexa_tune:
         description: "Build the separate FlexaTune installer from a test-build run"
         type: boolean
         default: false
@@ -52,14 +52,14 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          PURE_TUNE: ${{ inputs.pure_tune }}
+          FLEXA_TUNE: ${{ inputs.flexa_tune }}
           ARTIFACT_RUN_ID: ${{ inputs.artifact_run_id }}
         run: |
           $version = "$env:RELEASE_TAG".TrimStart('v')
-          if ($env:PURE_TUNE -eq "true") {
+          if ($env:FLEXA_TUNE -eq "true") {
             if (-not $env:ARTIFACT_RUN_ID) { throw "FlexaTune requires artifact_run_id" }
             $product = "FlexaTune"
-            $stem = "Pure-Tune-$version-Windows-x64"
+            $stem = "FlexaTune-$version-Windows-x64"
             gh run download "$env:ARTIFACT_RUN_ID" --repo "$env:GITHUB_REPOSITORY" --name "$stem-test" --dir downloaded
             $zip = Join-Path (Resolve-Path downloaded) "$stem.zip"
             Expand-Archive $zip -DestinationPath stage
@@ -97,12 +97,12 @@ jobs:
           "SETUP_NAME=$env:SETUP_STEM.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Check the Kinu Tune installer on a clean Windows
-        if: ${{ !inputs.pure_tune }}
+        if: ${{ !inputs.flexa_tune }}
         shell: pwsh
         run: ./tools/windows/check-installer.ps1 -Setup "Output/$env:SETUP_NAME"
 
       - name: Keep installer as a workflow artifact
-        if: ${{ !inputs.attach || inputs.pure_tune }}
+        if: ${{ !inputs.attach || inputs.flexa_tune }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.SETUP_NAME }}
@@ -110,7 +110,7 @@ jobs:
           retention-days: 7
 
       - name: Attach Kinu Tune installer to release
-        if: ${{ inputs.attach && !inputs.pure_tune }}
+        if: ${{ inputs.attach && !inputs.flexa_tune }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
