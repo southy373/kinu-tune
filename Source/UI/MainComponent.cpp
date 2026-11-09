@@ -553,12 +553,14 @@ MainComponent::MainComponent(bool enableAudioDevice)
   parameterPanel.setPluginMode(isPluginMode());
   parameterPanel.setUiBrightness(settingsManager->getUiBrightnessPercent());
   applyUiBrightness(settingsManager->getUiBrightnessPercent());
-  parameterPanel.onProjectBound = [this](Project *)
+  parameterPanel.onProjectBound = [this](Project *project)
   {
     // Every path that rebinds the project goes through the parameter panel,
     // so the inspector and harmony card follow it from here.
     variAudioInspector.getHarmonyPanel().refreshProject();
     variAudioInspector.refresh();
+    toolbar.setChangesBypassed(project != nullptr &&
+                               project->isChangesBypassed());
     if (hasCachedHostTimelineState)
       updateHostTimelineState(cachedHostTempoBpm, cachedHostBeatNumerator,
                               cachedHostBeatDenominator);
@@ -593,8 +595,6 @@ MainComponent::MainComponent(bool enableAudioDevice)
     // the previous engine would stay until the user happened to edit again.
     rerenderEditedNotes();
   };
-  parameterPanel.onChangesBypassChanged = [this](bool bypassed)
-  { setVariAudioChangesBypassed(bypassed); };
   // After the callback above is wired: where AI Resynthesis cannot run, this
   // moves a saved AI choice to Classic, and that has to be saved and handed to
   // the controller.
@@ -682,6 +682,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (onRecordArmChanged)
       onRecordArmChanged(armed);
   };
+  toolbar.onToggleChangesBypass = [this](bool bypassed)
+  { setVariAudioChangesBypassed(bypassed); };
   toolbar.onToggleAudition = [this](bool enabled)
   {
     dragAuditionEnabled = enabled;
@@ -849,11 +851,11 @@ MainComponent::MainComponent(bool enableAudioDevice)
     if (isPluginMode() && onPitchEditFinished)
       onPitchEditFinished();
   };
-  parameterPanel.onGlobalPitchPercentChanged =
+  variAudioInspector.onGlobalPitchPercentChanged =
       [globalRenderCommitted](double) { globalRenderCommitted(); };
-  parameterPanel.onGlobalFormantChanged =
+  variAudioInspector.onGlobalFormantChanged =
       [globalRenderCommitted](double) { globalRenderCommitted(); };
-  parameterPanel.onGlobalLengthPercentChanged = [this](double percent)
+  variAudioInspector.onGlobalLengthPercentChanged = [this](double percent)
   {
     auto *project = getProject();
     if (!project)
@@ -2622,6 +2624,7 @@ void MainComponent::setVariAudioChangesBypassed(bool bypassed)
     return;
 
   project->setChangesBypassed(bypassed);
+  toolbar.setChangesBypassed(bypassed);
   // Either direction goes through the one render request: while bypassed
   // the synthesizer short-circuits to the original waveform instead of
   // resynthesizing, and lifting the bypass renders the notes the bypass

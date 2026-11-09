@@ -17,6 +17,7 @@ ToolbarComponent::ToolbarComponent()
     stopButton.setImage(loadImage(BinaryData::stop_png, BinaryData::stop_pngSize));
     loopButton.setImage(loadImage(BinaryData::cycle_png, BinaryData::cycle_pngSize));
     auditionButton.setImage(loadImage(BinaryData::audition_png, BinaryData::audition_pngSize));
+    bypassButton.setImage(loadImage(BinaryData::bypass_png, BinaryData::bypass_pngSize));
     undoButton.setImage(loadImage(BinaryData::undo_png, BinaryData::undo_pngSize));
     redoButton.setImage(loadImage(BinaryData::redo_png, BinaryData::redo_pngSize));
     selectModeButton.setImage(loadImage(BinaryData::select_png, BinaryData::select_pngSize));
@@ -42,6 +43,7 @@ ToolbarComponent::ToolbarComponent()
     addAndMakeVisible(timingModeButton);
     addAndMakeVisible(followButton);
     addAndMakeVisible(auditionButton);
+    addAndMakeVisible(bypassButton);
     addAndMakeVisible(undoButton);
     addAndMakeVisible(redoButton);
     addAndMakeVisible(parametersButton);
@@ -58,6 +60,7 @@ ToolbarComponent::ToolbarComponent()
     timingModeButton.addListener(this);
     followButton.addListener(this);
     auditionButton.addListener(this);
+    bypassButton.addListener(this);
     undoButton.addListener(this);
     redoButton.addListener(this);
     parametersButton.addListener(this);
@@ -72,6 +75,7 @@ ToolbarComponent::ToolbarComponent()
     selectModeButton.setToggleState(true, juce::dontSendNotification);
     followButton.setToggleState(followPlayback, juce::dontSendNotification);
     auditionButton.setToggleState(false, juce::dontSendNotification);
+    bypassButton.setToggleState(false, juce::dontSendNotification);
     undoButton.setEnabled(false);
     redoButton.setEnabled(false);
     parametersButton.setToggleState(false, juce::dontSendNotification);
@@ -209,6 +213,12 @@ void ToolbarComponent::resized()
                              capsuleY + (capsuleH - rightButtonSize) / 2,
                              rightButtonSize, rightButtonSize);
 
+    // Changes Bypass sits next to live audition (batch 3).
+    auto bypassBtnArea = rightSection.removeFromRight(rightButtonSize + 2);
+    bypassButton.setBounds(bypassBtnArea.getRight() - rightButtonSize,
+                           capsuleY + (capsuleH - rightButtonSize) / 2,
+                           rightButtonSize, rightButtonSize);
+
     // Keep the edit tools centered in the toolbar.
     const int editToolGap = 6;
     const int editToolPad = 15;
@@ -327,6 +337,7 @@ void ToolbarComponent::refreshLocalisedText()
     timingModeButton.setTooltip(TR("tooltip.timing_tool"));
     followButton.setTooltip(TR("tooltip.auto_scroll"));
     auditionButton.setTooltip(TR("tooltip.live_audition"));
+    bypassButton.setTooltip(TR("tooltip.changes_bypass"));
     recordButton.setTooltip(TR("tooltip.capture"));
     playButton.setTooltip(TR("toolbar.play"));
     stopButton.setTooltip(TR("toolbar.stop"));
@@ -406,6 +417,11 @@ void ToolbarComponent::buttonClicked(juce::Button *button)
     {
         if (onToggleAudition)
             onToggleAudition(auditionButton.getToggleState());
+    }
+    else if (button == &bypassButton)
+    {
+        if (onToggleChangesBypass)
+            onToggleChangesBypass(bypassButton.getToggleState());
     }
     else if (button == &undoButton && onUndo)
         onUndo();
@@ -518,6 +534,11 @@ void ToolbarComponent::setLoopEnabled(bool enabled)
 {
     loopEnabled = enabled;
     loopButton.setToggleState(loopEnabled, juce::dontSendNotification);
+}
+
+void ToolbarComponent::setChangesBypassed(bool bypassed)
+{
+    bypassButton.setToggleState(bypassed, juce::dontSendNotification);
 }
 
 void ToolbarComponent::setAuditionEnabled(bool enabled)

@@ -23,6 +23,9 @@ constexpr int kTargetLabelHeight = 18;
 constexpr int kValueRowHeight = 34;
 constexpr int kNumRows = 5;
 
+constexpr int kGlobalRowHeight = 26;
+constexpr int kGlobalCardHeight = kInnerPadY * 2 + kHeaderHeight + kRowGap +
+                                  kGlobalRowHeight * 3 + (kRowGap + 1) * 2;
 constexpr int kRowsBoxHeight = kNumRows * kValueRowHeight + 4;
 constexpr int kVariAudioCardHeight =
     kInnerPadY * 2 + kHeaderHeight + kRowGap + kMenuRowHeight * 2 + kRowGap +
@@ -191,12 +194,95 @@ VariAudioInspector::VariAudioInspector()
     viewport.setScrollBarThickness(kScrollBarThickness);
     addAndMakeVisible(viewport);
 
-    for (auto* header : {&variAudioHeader, &editorScaleHeader})
+    for (auto* header : {&variAudioHeader, &editorScaleHeader, &globalHeader})
     {
         header->setFont(AppFont::getBoldFont(16.0f));
         header->setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
         content.addAndMakeVisible(*header);
     }
+
+    // Global faders (batch 3, moved from the parameter panel): styled
+    // like the sliders they were there. Commits (and only commits) reach
+    // the owner: a drag commits on drag end, while a text entry or an
+    // Alt+click reset commits through onValueChange because no drag is
+    // in progress then.
+    for (auto* label : {&globalPitchLabel, &globalFormantLabel, &globalLengthLabel})
+    {
+        label->setColour(juce::Label::textColourId, juce::Colour(0xFFE6E6E6u));
+        label->setFont(AppFont::getFont(16.0f));
+        content.addAndMakeVisible(*label);
+    }
+
+    const auto setupGlobalFader = [](GlobalFaderSlider& slider, double rangeMin,
+                                     double rangeMax, double neutral,
+                                     const juce::String& suffix)
+    {
+        slider.setRange(rangeMin, rangeMax, 0.1);
+        slider.setNeutralValue(neutral);
+        slider.setValue(neutral, juce::dontSendNotification);
+        slider.setNumDecimalPlacesToDisplay(1);
+        if (suffix.isNotEmpty())
+        {
+            slider.setTextValueSuffix(suffix);
+            slider.setHideSuffixWhileEditing(true);
+        }
+        slider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 64, 22);
+        slider.setColour(juce::Slider::backgroundColourId,
+                         juce::Colour(0xFF30302Eu));
+        slider.setColour(juce::Slider::trackColourId,
+                         juce::Colour(0xFF30302Eu));
+        slider.setColour(juce::Slider::textBoxBackgroundColourId,
+                         juce::Colours::transparentBlack);
+        slider.setColour(juce::Slider::textBoxOutlineColourId,
+                         juce::Colours::transparentBlack);
+        slider.setColour(juce::Slider::textBoxTextColourId,
+                         juce::Colour(0xFFE6E6E6u));
+    };
+    setupGlobalFader(globalPitchSlider, 50.0, 200.0, 100.0, " %");
+    setupGlobalFader(globalFormantSlider, -12.0, 12.0, 0.0, {});
+    setupGlobalFader(globalLengthSlider, 50.0, 200.0, 100.0, " %");
+
+    globalPitchSlider.onValueChange = [this]()
+    {
+        if (!globalIsUpdating && !globalPitchDragging)
+            setGlobalPitchPercentInternal(globalPitchSlider.getValue(), true);
+    };
+    globalPitchSlider.onDragStart = [this]() { globalPitchDragging = true; };
+    globalPitchSlider.onDragEnd = [this]()
+    {
+        globalPitchDragging = false;
+        if (!globalIsUpdating)
+            setGlobalPitchPercentInternal(globalPitchSlider.getValue(), true);
+    };
+    content.addAndMakeVisible(globalPitchSlider);
+
+    globalFormantSlider.onValueChange = [this]()
+    {
+        if (!globalIsUpdating && !globalFormantDragging)
+            setGlobalFormantInternal(globalFormantSlider.getValue(), true);
+    };
+    globalFormantSlider.onDragStart = [this]() { globalFormantDragging = true; };
+    globalFormantSlider.onDragEnd = [this]()
+    {
+        globalFormantDragging = false;
+        if (!globalIsUpdating)
+            setGlobalFormantInternal(globalFormantSlider.getValue(), true);
+    };
+    content.addAndMakeVisible(globalFormantSlider);
+
+    globalLengthSlider.onValueChange = [this]()
+    {
+        if (!globalIsUpdating && !globalLengthDragging)
+            setGlobalLengthPercentInternal(globalLengthSlider.getValue(), true);
+    };
+    globalLengthSlider.onDragStart = [this]() { globalLengthDragging = true; };
+    globalLengthSlider.onDragEnd = [this]()
+    {
+        globalLengthDragging = false;
+        if (!globalIsUpdating)
+            setGlobalLengthPercentInternal(globalLengthSlider.getValue(), true);
+    };
+    content.addAndMakeVisible(globalLengthSlider);
 
     for (auto* label : {&smartControlsLabel, &snapModeLabel})
     {
@@ -334,6 +420,14 @@ VariAudioInspector::~VariAudioInspector()
 
 void VariAudioInspector::refreshLocalisedText()
 {
+    globalHeader.setText(TR("inspector.global"), juce::dontSendNotification);
+    globalPitchLabel.setText(TR("param.global_pitch_percent"), juce::dontSendNotification);
+    globalPitchSlider.setName(TR("param.global_pitch_percent"));
+    globalFormantLabel.setText(TR("param.global_formant"), juce::dontSendNotification);
+    globalFormantSlider.setName(TR("param.global_formant"));
+    globalLengthLabel.setText(TR("param.global_length_percent"), juce::dontSendNotification);
+    globalLengthSlider.setName(TR("param.global_length_percent"));
+
     variAudioHeader.setText(TR("inspector.variaudio"), juce::dontSendNotification);
     smartControlsLabel.setText(TR("inspector.smart_controls"), juce::dontSendNotification);
     snapModeLabel.setText(TR("inspector.snap_mode"), juce::dontSendNotification);
@@ -379,6 +473,7 @@ void VariAudioInspector::timerCallback()
 
 void VariAudioInspector::refreshFromProject()
 {
+    updateGlobalSliders();
     auto* project = getCurrentProject ? getCurrentProject() : nullptr;
     const bool hasProject = project != nullptr;
     smartControlsBox.setEnabled(hasProject);
@@ -489,6 +584,77 @@ void VariAudioInspector::applyScaleMode(ScaleMode mode)
     refreshFromProject();
 }
 
+void VariAudioInspector::updateGlobalSliders()
+{
+    auto* project = getCurrentProject ? getCurrentProject() : nullptr;
+    if (project != nullptr)
+    {
+        globalPitchPercent = project->getPitchPercent();
+        globalFormantShift = project->getFormantShift();
+        globalLengthPercent = project->getLengthPercent();
+    }
+    else
+    {
+        globalPitchPercent = 100.0;
+        globalFormantShift = 0.0;
+        globalLengthPercent = 100.0;
+    }
+
+    globalIsUpdating = true;
+    if (!globalPitchDragging)
+        globalPitchSlider.setValue(globalPitchPercent, juce::dontSendNotification);
+    if (!globalFormantDragging)
+        globalFormantSlider.setValue(globalFormantShift, juce::dontSendNotification);
+    if (!globalLengthDragging)
+        globalLengthSlider.setValue(globalLengthPercent, juce::dontSendNotification);
+    globalIsUpdating = false;
+}
+
+void VariAudioInspector::setGlobalPitchPercentInternal(double percent, bool notify)
+{
+    const double normalized = juce::jlimit(50.0, 200.0, percent);
+    const bool changed = std::abs(globalPitchPercent - normalized) > 0.0001;
+    globalPitchPercent = normalized;
+    globalPitchSlider.setValue(normalized, juce::dontSendNotification);
+
+    auto* project = getCurrentProject ? getCurrentProject() : nullptr;
+    if (project != nullptr && changed)
+        project->setPitchPercent(static_cast<float>(normalized));
+
+    if (notify && changed && onGlobalPitchPercentChanged)
+        onGlobalPitchPercentChanged(normalized);
+}
+
+void VariAudioInspector::setGlobalFormantInternal(double semitones, bool notify)
+{
+    const double normalized = juce::jlimit(-12.0, 12.0, semitones);
+    const bool changed = std::abs(globalFormantShift - normalized) > 0.0001;
+    globalFormantShift = normalized;
+    globalFormantSlider.setValue(normalized, juce::dontSendNotification);
+
+    auto* project = getCurrentProject ? getCurrentProject() : nullptr;
+    if (project != nullptr && changed)
+        project->setFormantShift(static_cast<float>(normalized));
+
+    if (notify && changed && onGlobalFormantChanged)
+        onGlobalFormantChanged(normalized);
+}
+
+void VariAudioInspector::setGlobalLengthPercentInternal(double percent, bool notify)
+{
+    // The inspector deliberately does not write the project here: a
+    // length change moves every note and must go through the owner's
+    // undoable action, which stores the percent itself
+    // (LengthPercentAction).
+    const double normalized = juce::jlimit(50.0, 200.0, percent);
+    const bool changed = std::abs(globalLengthPercent - normalized) > 0.0001;
+    globalLengthPercent = normalized;
+    globalLengthSlider.setValue(normalized, juce::dontSendNotification);
+
+    if (notify && changed && onGlobalLengthPercentChanged)
+        onGlobalLengthPercentChanged(normalized);
+}
+
 void VariAudioInspector::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xFF121212u));
@@ -497,7 +663,8 @@ void VariAudioInspector::paint(juce::Graphics& g)
 void VariAudioInspector::paintContent(juce::Graphics& g)
 {
     constexpr float radius = 8.0f;
-    for (const auto& cardBounds : {variAudioCardBounds, editorScaleCardBounds})
+    for (const auto& cardBounds : {globalCardBounds, variAudioCardBounds,
+                                   editorScaleCardBounds})
     {
         auto rect = cardBounds.toFloat();
         g.setColour(juce::Colour(0xFF171717u));
@@ -521,8 +688,8 @@ void VariAudioInspector::paintContent(juce::Graphics& g)
 
 int VariAudioInspector::getContentHeight() const
 {
-    return kPadY + kVariAudioCardHeight + kPadY + kEditorScaleCardHeight +
-           harmonyPanel.getPreferredHeight() + kPadY;
+    return kPadY + kGlobalCardHeight + kPadY + kVariAudioCardHeight + kPadY +
+           kEditorScaleCardHeight + harmonyPanel.getPreferredHeight() + kPadY;
 }
 
 void VariAudioInspector::resized()
@@ -538,6 +705,26 @@ void VariAudioInspector::resized()
 void VariAudioInspector::layoutContent(int width)
 {
     auto area = juce::Rectangle<int>(0, 0, width, content.getHeight()).reduced(kPadX, kPadY);
+
+    globalCardBounds = area.removeFromTop(kGlobalCardHeight);
+    {
+        auto card = globalCardBounds.reduced(kInnerPadX, kInnerPadY);
+        globalHeader.setBounds(card.removeFromTop(kHeaderHeight));
+        card.removeFromTop(kRowGap);
+
+        auto pitchRow = card.removeFromTop(kGlobalRowHeight);
+        globalPitchLabel.setBounds(pitchRow.removeFromLeft(110));
+        globalPitchSlider.setBounds(pitchRow.reduced(0, 2));
+        card.removeFromTop(kRowGap + 1);
+        auto formantRow = card.removeFromTop(kGlobalRowHeight);
+        globalFormantLabel.setBounds(formantRow.removeFromLeft(110));
+        globalFormantSlider.setBounds(formantRow.reduced(0, 2));
+        card.removeFromTop(kRowGap + 1);
+        auto lengthRow = card.removeFromTop(kGlobalRowHeight);
+        globalLengthLabel.setBounds(lengthRow.removeFromLeft(110));
+        globalLengthSlider.setBounds(lengthRow.reduced(0, 2));
+    }
+    area.removeFromTop(kPadY);
 
     variAudioCardBounds = area.removeFromTop(kVariAudioCardHeight);
     auto card = variAudioCardBounds.reduced(kInnerPadX, kInnerPadY);

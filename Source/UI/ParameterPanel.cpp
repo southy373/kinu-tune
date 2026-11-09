@@ -28,7 +28,6 @@ constexpr int kSectionLabelHeight = 20;
 constexpr int kSectionLabelGap = kRowGap + 2;
 constexpr int kRadioRowHeight = 22;         // Rendering / Pitch mode toggles
 constexpr int kRenderStatusRowHeight = 18;  // "Last render: Classic"
-constexpr int kChangesBypassRowHeight = 22; // VariAudio Changes Bypass toggle
 constexpr int kTimelineModeRowHeight = 32;  // Beats | Time
 constexpr int kControlRowHeight = 26;       // label + control rows
 constexpr int kBrightnessRowHeight = 28;
@@ -36,18 +35,18 @@ constexpr int kLanguageRowHeight = 26;          // language selector row
 
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kRowGap +
-    kRenderStatusRowHeight + kRowGap + kChangesBypassRowHeight + kInnerPadY;
+    kRenderStatusRowHeight + kInnerPadY;
 
 // The inference device row is optional: it adds itself, leading gap included,
 // only while it is showing.
 constexpr int kRenderDeviceRowExtraHeight = (kRowGap + 1) + kControlRowHeight;
+// Batch 3: the global length % row moved to the inspector's Global card.
 constexpr int kTimeCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kTimelineModeRowHeight +
-    (kRowGap + 1) + kControlRowHeight + kRowGap + kControlRowHeight +
-    kRowGap + kControlRowHeight + kInnerPadY;
+    (kRowGap + 1) + kControlRowHeight + kRowGap + kControlRowHeight + kInnerPadY;
+// Batch 3: the global pitch % and formant rows moved to the inspector.
 constexpr int kPitchCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight +
-    (kRowGap + 1) + kControlRowHeight + (kRowGap + 1) + kControlRowHeight +
     (kRowGap + 1) + kControlRowHeight + (kRowGap + 1) + kControlRowHeight + kInnerPadY;
 constexpr int kBrightnessCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kBrightnessRowHeight + kInnerPadY;
@@ -268,8 +267,7 @@ ParameterPanel::ParameterPanel()
     languageSelectorButton.addListener(this);
     selectedLanguageCode = Localization::getInstance().getPersistedLanguageCode();
 
-    for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle,
-                          &changesBypassToggle })
+    for (auto* toggle : { &snapToSemitonesToggle, &timelineSnapCycleToggle })
     {
         addAndMakeVisible(toggle);
         toggle->setClickingTogglesState(true);
@@ -377,89 +375,6 @@ ParameterPanel::ParameterPanel()
     };
     addAndMakeVisible(timelineTempoSlider);
 
-    // Batch 2 (U7): the project-wide faders, styled like the reference
-    // slider. Commits (and only commits) reach the owner: a drag commits
-    // on drag end, while a text entry or an Alt+click reset commits
-    // through onValueChange because no drag is in progress then.
-    for (auto* label : { &globalPitchLabel, &globalFormantLabel,
-                         &globalLengthLabel })
-    {
-        addAndMakeVisible(label);
-        label->setColour(juce::Label::textColourId, juce::Colour(0xFFE6E6E6u));
-        label->setFont(AppFont::getFont(16.0f));
-    }
-
-    const auto setupGlobalFader = [](GlobalFaderSlider& slider, double rangeMin,
-                                     double rangeMax, double neutral,
-                                     const juce::String& suffix)
-    {
-        slider.setRange(rangeMin, rangeMax, 0.1);
-        slider.setNeutralValue(neutral);
-        slider.setValue(neutral, juce::dontSendNotification);
-        slider.setNumDecimalPlacesToDisplay(1);
-        if (suffix.isNotEmpty())
-        {
-            slider.setTextValueSuffix(suffix);
-            slider.setHideSuffixWhileEditing(true);
-        }
-        slider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 64, 22);
-        slider.setColour(juce::Slider::backgroundColourId,
-                         juce::Colour(0xFF30302Eu));
-        slider.setColour(juce::Slider::trackColourId,
-                         juce::Colour(0xFF30302Eu));
-        slider.setColour(juce::Slider::textBoxBackgroundColourId,
-                         juce::Colours::transparentBlack);
-        slider.setColour(juce::Slider::textBoxOutlineColourId,
-                         juce::Colours::transparentBlack);
-        slider.setColour(juce::Slider::textBoxTextColourId,
-                         juce::Colour(0xFFE6E6E6u));
-    };
-    setupGlobalFader(globalPitchSlider, 50.0, 200.0, 100.0, " %");
-    setupGlobalFader(globalFormantSlider, -12.0, 12.0, 0.0, {});
-    setupGlobalFader(globalLengthSlider, 50.0, 200.0, 100.0, " %");
-
-    globalPitchSlider.onValueChange = [this]()
-    {
-        if (!isUpdating && !globalPitchDragging)
-            setGlobalPitchPercentInternal(globalPitchSlider.getValue(), true);
-    };
-    globalPitchSlider.onDragStart = [this]() { globalPitchDragging = true; };
-    globalPitchSlider.onDragEnd = [this]()
-    {
-        globalPitchDragging = false;
-        if (!isUpdating)
-            setGlobalPitchPercentInternal(globalPitchSlider.getValue(), true);
-    };
-    addAndMakeVisible(globalPitchSlider);
-
-    globalFormantSlider.onValueChange = [this]()
-    {
-        if (!isUpdating && !globalFormantDragging)
-            setGlobalFormantInternal(globalFormantSlider.getValue(), true);
-    };
-    globalFormantSlider.onDragStart = [this]() { globalFormantDragging = true; };
-    globalFormantSlider.onDragEnd = [this]()
-    {
-        globalFormantDragging = false;
-        if (!isUpdating)
-            setGlobalFormantInternal(globalFormantSlider.getValue(), true);
-    };
-    addAndMakeVisible(globalFormantSlider);
-
-    globalLengthSlider.onValueChange = [this]()
-    {
-        if (!isUpdating && !globalLengthDragging)
-            setGlobalLengthPercentInternal(globalLengthSlider.getValue(), true);
-    };
-    globalLengthSlider.onDragStart = [this]() { globalLengthDragging = true; };
-    globalLengthSlider.onDragEnd = [this]()
-    {
-        globalLengthDragging = false;
-        if (!isUpdating)
-            setGlobalLengthPercentInternal(globalLengthSlider.getValue(), true);
-    };
-    addAndMakeVisible(globalLengthSlider);
-
     brightnessSlider.setRange(75.0, 200.0, 1.0);
     brightnessSlider.setValue(uiBrightnessPercent, juce::dontSendNotification);
     brightnessSlider.setNumDecimalPlacesToDisplay(0);
@@ -484,9 +399,7 @@ ParameterPanel::ParameterPanel()
     const std::array<juce::Component*, 11> pitchComponents {{
         &pitchSectionLabel, &chromaticToggle, &scaleToggle,
         &referenceLabel, &referenceSlider,
-        &snapToSemitonesToggle, &dragSnapModeButton,
-        &globalPitchLabel, &globalPitchSlider,
-        &globalFormantLabel, &globalFormantSlider
+        &snapToSemitonesToggle, &dragSnapModeButton
     }};
     for (auto* component : pitchComponents)
         component->setVisible(kShowPitchCard);
@@ -621,9 +534,6 @@ void ParameterPanel::resized()
     bounds.removeFromTop(kRowGap);
     renderStatusLabel.setBounds(bounds.removeFromTop(kRenderStatusRowHeight));
 
-    bounds.removeFromTop(kRowGap);
-    changesBypassToggle.setBounds(bounds.removeFromTop(kChangesBypassRowHeight));
-
     if (renderDeviceRowVisible)
     {
         bounds.removeFromTop(rowGap + 1);
@@ -698,11 +608,6 @@ void ParameterPanel::resized()
 
     bounds.removeFromTop(rowGap);
 
-    // Batch 2 (U7): global length % row.
-    auto globalLengthRow = bounds.removeFromTop(kControlRowHeight);
-    globalLengthLabel.setBounds(globalLengthRow.removeFromLeft(110));
-    globalLengthSlider.setBounds(globalLengthRow.reduced(0, 2));
-
     int timeCardBottom = bounds.getY() + innerPadY;
     timeCardBounds = juce::Rectangle<int>(cardArea.getX(), timeCardStart,
                                            cardArea.getWidth(), timeCardBottom - timeCardStart);
@@ -737,18 +642,6 @@ void ParameterPanel::resized()
     snapToSemitonesToggle.setBounds(dragSnapRow.removeFromLeft(110));
     dragSnapRow.removeFromLeft(columnGap);
     dragSnapModeButton.setBounds(dragSnapRow.translated(-4, 0));
-
-    bounds.removeFromTop(rowGap + 1);
-
-    // Batch 2 (U7): global pitch % and global formant rows.
-    auto globalPitchRow = bounds.removeFromTop(kControlRowHeight);
-    globalPitchLabel.setBounds(globalPitchRow.removeFromLeft(110));
-    globalPitchSlider.setBounds(globalPitchRow.reduced(0, 2));
-
-    bounds.removeFromTop(rowGap + 1);
-    auto globalFormantRow = bounds.removeFromTop(kControlRowHeight);
-    globalFormantLabel.setBounds(globalFormantRow.removeFromLeft(110));
-    globalFormantSlider.setBounds(globalFormantRow.reduced(0, 2));
 
     const int pitchCardBottom = bounds.getY() + innerPadY;
     pitchCardBounds = kShowPitchCard
@@ -825,11 +718,6 @@ void ParameterPanel::buttonClicked(juce::Button* button)
     if (button == &timelineSnapCycleToggle)
     {
         setTimelineSnapCycleInternal(timelineSnapCycleToggle.getToggleState(), true);
-        return;
-    }
-    if (button == &changesBypassToggle)
-    {
-        setChangesBypassedInternal(changesBypassToggle.getToggleState(), true);
         return;
     }
     if (button == &beatsTimelineToggle)
@@ -945,18 +833,8 @@ void ParameterPanel::refreshLocalisedText()
 
     renderDeviceLabel.setText(TR("param.device"), juce::dontSendNotification);
     refreshRenderStatusText();
-    changesBypassToggle.setButtonText(TR("param.changes_bypass"));
-    changesBypassToggle.setTooltip(TR("tooltip.changes_bypass"));
-
     referenceLabel.setText(TR("param.reference_a4"), juce::dontSendNotification);
     referenceSlider.setName(TR("param.pitch_reference"));
-
-    globalPitchLabel.setText(TR("param.global_pitch_percent"), juce::dontSendNotification);
-    globalPitchSlider.setName(TR("param.global_pitch_percent"));
-    globalFormantLabel.setText(TR("param.global_formant"), juce::dontSendNotification);
-    globalFormantSlider.setName(TR("param.global_formant"));
-    globalLengthLabel.setText(TR("param.global_length_percent"), juce::dontSendNotification);
-    globalLengthSlider.setName(TR("param.global_length_percent"));
 
     snapToSemitonesToggle.setButtonText(TR("param.drag_snap"));
 
@@ -1115,9 +993,6 @@ void ParameterPanel::updateGlobalSliders()
         timelineTempoBpm = project->getTimelineTempoBpm();
         timelineGridDivision = project->getTimelineGridDivision();
         timelineSnapCycle = project->getTimelineSnapCycle();
-        globalPitchPercent = project->getPitchPercent();
-        globalFormantShift = project->getFormantShift();
-        globalLengthPercent = project->getLengthPercent();
     }
     else
     {
@@ -1132,15 +1007,9 @@ void ParameterPanel::updateGlobalSliders()
         timelineTempoBpm = 120.0;
         timelineGridDivision = TimelineGridDivision::Quarter;
         timelineSnapCycle = false;
-        globalPitchPercent = 100.0;
-        globalFormantShift = 0.0;
-        globalLengthPercent = 100.0;
     }
 
     referenceSlider.setValue(pitchReferenceHz, juce::dontSendNotification);
-    globalPitchSlider.setValue(globalPitchPercent, juce::dontSendNotification);
-    globalFormantSlider.setValue(globalFormantShift, juce::dontSendNotification);
-    globalLengthSlider.setValue(globalLengthPercent, juce::dontSendNotification);
     snapToSemitonesToggle.setToggleState(snapToSemitones, juce::dontSendNotification);
     dragSnapModeButton.setButtonText(getDragSnapModeLabel(dragSnapMode));
     dragSnapModeButton.setEnabled(snapToSemitones);
@@ -1187,20 +1056,6 @@ void ParameterPanel::setSynthesisEngineInternal(SynthesisEngineType type, bool n
 
     if (notify && onSynthesisEngineChanged)
         onSynthesisEngineChanged(synthesisEngine);
-}
-
-void ParameterPanel::setChangesBypassed(bool bypassed)
-{
-    setChangesBypassedInternal(bypassed, false);
-}
-
-void ParameterPanel::setChangesBypassedInternal(bool bypassed, bool notify)
-{
-    changesBypassed = bypassed;
-    changesBypassToggle.setToggleState(bypassed, juce::dontSendNotification);
-
-    if (notify && onChangesBypassChanged)
-        onChangesBypassChanged(changesBypassed);
 }
 
 void ParameterPanel::refreshSynthesisToggles()
@@ -1435,48 +1290,6 @@ void ParameterPanel::setPitchReferenceInternal(int hz, bool notify)
 
     if (notify && changed && onPitchReferenceChanged)
         onPitchReferenceChanged(normalized);
-}
-
-void ParameterPanel::setGlobalPitchPercentInternal(double percent, bool notify)
-{
-    const double normalized = juce::jlimit(50.0, 200.0, percent);
-    const bool changed = std::abs(globalPitchPercent - normalized) > 0.0001;
-    globalPitchPercent = normalized;
-    globalPitchSlider.setValue(normalized, juce::dontSendNotification);
-
-    if (project != nullptr && changed)
-        project->setPitchPercent(static_cast<float>(normalized));
-
-    if (notify && changed && onGlobalPitchPercentChanged)
-        onGlobalPitchPercentChanged(normalized);
-}
-
-void ParameterPanel::setGlobalFormantInternal(double semitones, bool notify)
-{
-    const double normalized = juce::jlimit(-12.0, 12.0, semitones);
-    const bool changed = std::abs(globalFormantShift - normalized) > 0.0001;
-    globalFormantShift = normalized;
-    globalFormantSlider.setValue(normalized, juce::dontSendNotification);
-
-    if (project != nullptr && changed)
-        project->setFormantShift(static_cast<float>(normalized));
-
-    if (notify && changed && onGlobalFormantChanged)
-        onGlobalFormantChanged(normalized);
-}
-
-void ParameterPanel::setGlobalLengthPercentInternal(double percent, bool notify)
-{
-    // The panel deliberately does not write the project here: a length
-    // change moves every note and must go through the owner's undoable
-    // action, which stores the percent itself (LengthPercentAction).
-    const double normalized = juce::jlimit(50.0, 200.0, percent);
-    const bool changed = std::abs(globalLengthPercent - normalized) > 0.0001;
-    globalLengthPercent = normalized;
-    globalLengthSlider.setValue(normalized, juce::dontSendNotification);
-
-    if (notify && changed && onGlobalLengthPercentChanged)
-        onGlobalLengthPercentChanged(normalized);
 }
 
 void ParameterPanel::setTimelineDisplayModeInternal(TimelineDisplayMode mode, bool notify)

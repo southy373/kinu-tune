@@ -87,6 +87,9 @@ public:
     void setZoom(float pixelsPerSecond); // Update zoom slider without triggering callback
     void setLoopEnabled(bool enabled);
     void setAuditionEnabled(bool enabled);
+    // Batch 3: the Changes Bypass toggle lives here, next to live
+    // audition, instead of as a labelled switch in the parameter panel.
+    void setChangesBypassed(bool bypassed);
     void setParametersVisible(bool visible);
     void setLeftPanelVisible(bool visible);
     // Left-panel group is ARA only; hidden (and takes no space) otherwise.
@@ -117,6 +120,7 @@ public:
     std::function<void()> onRedo;
     std::function<void(bool)> onToggleRecord;
     std::function<void(bool)> onToggleAudition;
+    std::function<void(bool)> onToggleChangesBypass;
 
     std::function<void(bool)> onToggleParameters; // Called with new visibility state
     std::function<void(bool)> onToggleLeftPanel;  // Called with new left-panel visibility
@@ -148,6 +152,7 @@ private:
     ToggleButton timingModeButton;
     ToggleButton followButton;
     ToggleButton auditionButton;
+    ToggleButton bypassButton;
     Button undoButton;
     Button redoButton;
     ToggleButton parametersButton;
