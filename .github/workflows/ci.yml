@@ -1,8 +1,10 @@
-# Checks every push and pull request: builds Kinu Tune with the unit tests on
-# macOS (Apple silicon) and runs them, and builds the Windows VST3 so code that
-# only one compiler accepts is caught before a release. On Windows it also runs
-# the one test that loads the models (ModelInferenceTests), so analysis and
-# synthesis are known to work there and not only on macOS.
+# Checks every push and pull request. Roles swapped in batch 2 (the user's
+# platform is Windows): the Windows job is the release gate - it builds the
+# VST3, builds the full unit-test suite and runs every test with ctest,
+# including the one that loads the models (ModelInferenceTests), and finishes
+# with the host check. The macOS job is kept as a compile-only check (the
+# product code must keep building for macOS, but the test suite no longer
+# runs there).
 name: CI
 
 on:
@@ -28,22 +30,22 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      # The Core ML vocoder is not in the repository and the tests load no
-      # model, so the model check only warns here.
+      # Compile-only since batch 2: the tests are not even configured
+      # here (PITCHNET_BUILD_TESTS=OFF) - the full suite runs on Windows.
+      # This job only proves the product code still builds for macOS.
+      # The Core ML vocoder is not in the repository, so the model check
+      # only warns here.
       - name: Configure
         run: >
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_OSX_ARCHITECTURES=arm64
-          -DPITCHNET_BUILD_TESTS=ON
+          -DPITCHNET_BUILD_TESTS=OFF
           -DPITCHNET_REQUIRE_MODELS=OFF
 
       # The hosted macOS runner has 3 CPUs and 7 GB of memory; an unbounded
       # parallel build starts dozens of compilers at once.
       - name: Build
         run: cmake --build build --config Release --parallel 3
-
-      - name: Run the unit tests
-        run: ctest --test-dir build --output-on-failure
 
   windows-build:
     runs-on: windows-latest
@@ -72,8 +74,9 @@ jobs:
       - name: Prepare BigVGAN model
         run: python tools/convert_bigvgan.py
 
-      # PITCHNET_BUILD_TESTS registers the tests; only ModelInferenceTests is
-      # built and run here (the rest run on macOS). DirectML is on, matching
+      # PITCHNET_BUILD_TESTS registers the tests; since batch 2 the full
+      # suite is built and run here (this job is the release gate - the
+      # macOS job is compile-only now). DirectML is on, matching
       # the release build: the hosted runner has no GPU, so the execution
       # providers fall back to the CPU there, and BigVGAN sessions are only
       # created at analysis time, which the host check below never reaches.
@@ -83,14 +86,17 @@ jobs:
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
 
-      # Loads fcpe.onnx with the Windows ONNX Runtime and checks the numbers:
-      # FCPE reports the tone's pitch, and PSOLA shifts it by a minor third.
-      # See tests/ModelInferenceTests.cpp.
-      - name: Build the model inference test
-        run: cmake --build build --config Release --target ModelInferenceTests --parallel
+      # The default target includes every test executable (they all link
+      # pitchnet_core, which the VST3 build does not use), so this builds
+      # the whole suite, ModelInferenceTests included. That test loads
+      # fcpe.onnx with the Windows ONNX Runtime and checks the numbers:
+      # FCPE reports the tone's pitch, and PSOLA shifts it by a minor
+      # third. See tests/ModelInferenceTests.cpp.
+      - name: Build the unit tests
+        run: cmake --build build --config Release --parallel
 
-      - name: Run the model inference test
-        run: ctest --test-dir build -C Release -R ModelInferenceTests --output-on-failure
+      - name: Run the unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
 
       # Creates the plug-in in a minimal host on the runner's runtime and on an
       # older Visual C++ runtime, then runs pluginval. See the script.
