@@ -57,9 +57,11 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      # The BigVGAN model (~490 MB) is generated, never committed. The
-      # speech build offers AI Resynthesis only when the file is present,
-      # so CI produces it the same way a local developer would.
+      # The BigVGAN models (the main opset 20 export and the opset 17
+      # variant, ~490 MB each) are generated, never committed. The
+      # speech build offers AI Resynthesis only when the main file is
+      # present, so CI produces them the same way a local developer
+      # would.
       - name: Set up Python for BigVGAN model conversion
         uses: actions/setup-python@v5
         with:
@@ -71,7 +73,7 @@ jobs:
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0
           python -m pip install onnx==1.23.2 onnxscript==0.7.2 onnxruntime==1.19.2 huggingface_hub==2.4.0 matplotlib scipy librosa
 
-      - name: Prepare BigVGAN model
+      - name: Prepare BigVGAN models
         run: python tools/convert_bigvgan.py
 
       # PITCHNET_BUILD_TESTS registers the tests; since batch 2 the full

@@ -2810,8 +2810,22 @@ void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
   }
   else if (scrollBar == &verticalScrollBar)
   {
-    scrollY = newRangeStart;
-    coordMapper->setScrollY(newRangeStart);
+    // The scrollbar's range start is not guaranteed to be a valid scroll
+    // position: JUCE clamps the visible range into the total range, which
+    // moves the start (it becomes the total range's start when the view
+    // is taller than the whole pitch space), and the value can equally be
+    // stale from before a resize. setScrollY() clamps for exactly this
+    // reason; applying the raw value here let a window resize or a panel
+    // slide throw the view outside the pitch space and take the segments
+    // off screen, so clamp it the same way.
+    const double totalHeight =
+        (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
+    const double maxScrollY = std::max(
+        0.0, totalHeight - static_cast<double>(getVisibleContentHeight()));
+    scrollY = juce::jlimit(0.0, maxScrollY, newRangeStart);
+    coordMapper->setScrollY(scrollY);
+    if (std::abs(verticalScrollBar.getCurrentRangeStart() - scrollY) > 0.01)
+      verticalScrollBar.setCurrentRangeStart(scrollY);
   }
   updatePreviewButtonBounds();
   repaint();
@@ -4789,6 +4803,17 @@ void PianoRollComponent::updateScrollBars()
     int visibleHeight = getVisibleContentHeight();
     scrollX = clampScrollX(scrollX);
     coordMapper->setScrollX(scrollX);
+
+    // Re-validate the vertical view state against the current height,
+    // mirroring the scrollX clamp above (this runs on every resize): a
+    // taller window lowers the maximum scroll, and leaving the old value
+    // in place - or letting the scrollbar below adopt it - could park the
+    // view outside the pitch space with the segments nowhere on screen.
+    const double maxScrollY =
+        std::max(0.0, static_cast<double>(totalHeight) -
+                          static_cast<double>(visibleHeight));
+    scrollY = juce::jlimit(0.0, maxScrollY, scrollY);
+    coordMapper->setScrollY(scrollY);
 
     horizontalScrollBar.setRangeLimits(
         getTimelineStart() * pixelsPerSecond,

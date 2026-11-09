@@ -575,7 +575,8 @@ bool EditorController::ensureBigVganLoaded()
   auto modelPath = PlatformPaths::getBigVganModelFile();
   if (!modelPath.existsAsFile())
     return false;
-  return bigVganVocoder->loadModel(modelPath);
+  return bigVganVocoder->loadModel(
+      modelPath, PlatformPaths::getBigVganOpset17ModelFile());
 }
 
 void EditorController::resynthesizeIncrementalAsync(

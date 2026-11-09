@@ -191,6 +191,15 @@ namespace PlatformPaths
         return getModelFile("bigvgan_v2_44khz_128band.onnx");
     }
 
+    // The lower-opset (17) variant of the BigVGAN model, generated next
+    // to the main model by tools/convert_bigvgan.py. The vocoder's
+    // session ladder uses it for its middle rungs; it is optional, so
+    // callers must check existsAsFile().
+    inline juce::File getBigVganOpset17ModelFile()
+    {
+        return getModelFile("bigvgan_v2_44khz_128band_opset17.onnx");
+    }
+
     inline juce::File getModelSubDir(const juce::String &dirName,
                                      const juce::String &verifyFile = "")
     {

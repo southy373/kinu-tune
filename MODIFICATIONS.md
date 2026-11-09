@@ -15,6 +15,82 @@ The full history of the changes is in the git log of this repository.
 
 ## Summary of changes
 
+### Batch 3.1 (DirectML session ladder, resize fixes)
+
+Follow-up to the batch 3 trial on the user's machine (2026-11-10): the
+BigVGAN log showed DirectML loading the model but every inference
+failing on a ConvTranspose node (`node_convolution`, empty status
+message), so batch 3's fallback rendered everything on CPU at roughly
+9-10x slower than realtime. This batch attacks the GPU path and fixes
+three display bugs from the same trial. **Which ladder rung works on a
+real GPU is unverified**: no environment available during development
+has a DirectML GPU, so the fix is verified by construction, CPU
+behaviour and tests, and on the user's machine by the bigvgan log at
+the next trial (every rung's outcome and the adopted rung are logged).
+
+- **Opset 17 model variant.** `tools/convert_bigvgan.py` now also
+  produces `bigvgan_v2_44khz_128band_opset17.onnx` alongside the main
+  export (opset 20 / IR 10, unchanged). Neither exporter can target
+  opset 17 for this graph (the legacy TorchScript exporter fails on
+  the alias-free activation's Pad -> Conv; the Dynamo exporter's
+  automatic downgrade has no version adapter for Pad), so the variant
+  is derived by re-stamping the exported graph's opset declaration
+  from 20 to 17 (the IR version stays 10). The graph uses no post-17
+  operator features; the derivation is fail-closed (an operator
+  inventory allowlist, no Pad "axes" input, the full ONNX checker
+  under the opset 17 schema, an ONNX Runtime smoke test, and a
+  numerical cross-check against the main model with tolerance 1e-4).
+  Measured when this was adopted: the variant's CPU output is
+  bit-identical to the main model's (max abs error 0.0), and both sit
+  1.23e-05 (max abs) from the PyTorch reference - no quality change.
+  The release zip - and therefore the installer, which copies the
+  whole models folder - now bundles both files (~490 MB each, so the
+  download grows by roughly one more model). The main model alone
+  still gates AI Resynthesis availability; the variant is optional
+  everywhere it is consumed.
+- **Session ladder (BigVGANVocoder).** Session establishment now walks
+  a ladder and adopts the first rung whose **probe inference** (a
+  fixed 16-frame mel, which runs every node of the fully convolutional
+  graph) succeeds: (1) DirectML + main model + full graph
+  optimization, (2) DirectML + main model + basic graph optimization,
+  (3) DirectML + opset 17 model + full graph optimization,
+  (4) DirectML + opset 17 model + basic graph optimization, (5) CPU +
+  main model (batch 3's fallback configuration). The DirectML rungs
+  exist only in DirectML builds, and when the provider cannot be
+  appended at all the remaining DirectML rungs are skipped. Every
+  rung's success or failure and its reason, the adopted rung, and the
+  probe duration are written to the bigvgan log; a probe failure never
+  surfaces as a render failure. The ladder runs once per model load,
+  not per render. Batch 3's inference-time behaviour is unchanged: a
+  real render that still fails on the GPU recreates the session on CPU
+  (from the model file the live session was built from) and retries
+  once. The CPU thread cap (~70%) and the generic DirectML device-0
+  selection are unchanged; there is no GPU-model-specific branching.
+- **Stale failure reasons cleared (batch 3 review, minor 1).**
+  `BigVGANVocoder::lastError` is cleared on a successful load and on a
+  successful inference, and `IncrementalSynthesizer` clears its
+  last-synthesis-error at the start of every render, so a failure can
+  no longer be labelled with a previous render's reason.
+- **Segments vanishing on panel close / window resize.** The piano
+  roll's vertical view state was the one piece not re-validated on
+  resize: `updateScrollBars()` re-clamped scrollX against the new size
+  but not scrollY, and `scrollBarMoved()` applied the vertical
+  scrollbar's range start unclamped - a value JUCE itself moves when
+  it clamps the visible range into the total range (for example when
+  the window is taller than the whole pitch space), which then fed
+  back into the view. Both places now clamp scrollY exactly the way
+  `setScrollY()` does, so a resize or a panel slide re-validates the
+  view against the new size. Covered by the new PianoRollResizeTests:
+  the initial fit survives grow and shrink resizes with every segment
+  on screen, and the zoomed-out tall-window regime clamps to scrollY 0
+  instead of parking the view outside the pitch space.
+- **Initial vertical fit margin.** The fit that frames the segments
+  (the initial fit when a project opens, Shift+F, the vertical
+  auto-zoom) previously widened only the top of the analyzed range by
+  1 semitone. It now adds **3 semitones on both sides** (clamped to
+  the representable pitch range, MIN_MIDI_NOTE..MAX_MIDI_NOTE), so a
+  project opens more zoomed out vertically, as the trial asked.
+
 ### Batch 3 (FlexaTune)
 
 Trial feedback on the batch-2 build, implemented as one batch.

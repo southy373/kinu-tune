@@ -877,6 +877,13 @@ void IncrementalSynthesizer::setLastSynthesisError(std::string error) {
 
 void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                                               CompleteCallback onComplete) {
+  // Every render starts with a clean slate: a failure reason belongs to
+  // the render that produced it, so clear the stored one here - a later
+  // failure on another path must not pick up the previous render's
+  // reason (batch 3 review, minor 1). The BigVGAN path sets it again
+  // below when its own render genuinely fails.
+  setLastSynthesisError("");
+
   // VariAudio Changes Bypass: no resynthesis happens at all. The composite
   // waveform becomes the pristine original, so playback - and, in plugin
   // mode, what the backend publishes to the host - is the untouched audio.

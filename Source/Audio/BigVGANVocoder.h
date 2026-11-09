@@ -23,10 +23,17 @@
  * BigVGAN v2 (44kHz / 128 band) neural vocoder wrapper, ONNX Runtime.
  *
  * In DirectML builds (Windows) the session runs on the GPU through the
- * DirectML execution provider, exactly like the PC-NSF-HiFiGAN Vocoder;
- * when DirectML cannot be appended or the session cannot be created with
- * it, the class quietly falls back to a CPU session. Other builds are
- * CPU-only.
+ * DirectML execution provider, exactly like the PC-NSF-HiFiGAN Vocoder.
+ * Session establishment walks a ladder of configurations (see
+ * establishSession()): the DirectML rungs pair each model file - the
+ * main opset 20 export and the lower-opset (17) variant - with full and
+ * then reduced graph optimization, and a short probe inference has to
+ * succeed on a rung before it is adopted, because a DirectML session can
+ * be created successfully and still fail on the first real inference
+ * (batch 3's field failure: every inference died on a ConvTranspose node
+ * while session creation succeeded). The last rung is the CPU session
+ * batch 3 fell back to. Other builds are CPU-only and take that rung
+ * directly.
  *
  * BigVGAN takes a mel spectrogram only - unlike the PC-NSF-HiFiGAN Vocoder
  * it has no F0 input, so pitch control has to happen before this class: the
@@ -56,6 +63,16 @@ public:
    * @return true if successful
    */
   bool loadModel(const juce::File &modelPath);
+
+  /**
+   * Load the BigVGAN model, with the lower-opset variant named explicitly
+   * (PlatformPaths::getBigVganOpset17ModelFile). The one-argument form
+   * looks for the variant as a sibling of the main model instead. A
+   * missing variant only shortens the session ladder; the main model
+   * alone is enough to load.
+   */
+  bool loadModel(const juce::File &modelPath,
+                 const juce::File &opset17ModelPath);
 
   bool isLoaded() const { return loaded; }
 
@@ -135,6 +152,13 @@ private:
   std::string activeProvider = "CPU";
 
   juce::File modelFile;
+  // Lower-opset (17) variant of the model, when present; the session
+  // ladder's middle rungs run on it. May be an invalid File.
+  juce::File opset17ModelFile;
+  // The model file the live session was actually built from (the main
+  // model or the opset 17 variant); the inference-time CPU fallback
+  // recreates the session from this file.
+  juce::File activeModelFile;
   std::string lastError;
   std::unique_ptr<std::ofstream> logFile;
 
@@ -167,12 +191,29 @@ private:
   std::vector<float>
   inferChunkLocked(const std::vector<std::vector<float>> &mel);
 
-  // (Re)creates onnxSession for modelFile and refreshes the cached
-  // input/output names and provider state. cpuOnly builds the session
-  // from createCpuFallbackSessionOptions() (no DirectML). Returns false
+  // (Re)creates onnxSession from the given model file and refreshes the
+  // cached input/output names and provider state. wantDirectML asks for
+  // the DirectML provider (device 0); whether it was actually appended is
+  // reported through directMLProviderAppended, and usingGpuProvider only
+  // becomes true when it was both asked for and appended. Returns false
   // when the model's signature is not the expected 1-in/1-out; the
   // Ort::Session constructor's own failures propagate as Ort::Exception.
-  bool createSession(bool cpuOnly);
+  bool createSessionFor(const juce::File &file, bool wantDirectML,
+                        GraphOptimizationLevel optLevel);
+
+  // Runs the session ladder (the DirectML rungs, then CPU) over
+  // modelFile / opset17ModelFile and adopts the first configuration
+  // whose probe inference succeeds. Logs every rung's outcome and the
+  // adopted configuration; on total failure sets lastError and returns
+  // false. Called once per loadModel().
+  bool establishSession();
+
+  // One short inference (a fixed 16-frame mel) against the current
+  // session, used to prove a ladder rung before it is adopted. Returns
+  // false with the reason in error on any exception or output mismatch.
+  // Never touches lastError: a probe failure is not a render failure
+  // and must not surface as one.
+  bool probeCurrentSession(std::string &error);
 
   // infer()'s chunk loop against the current session. Sets lastError on
   // failure and returns empty; a shutdown mid-loop also returns empty
@@ -180,11 +221,12 @@ private:
   std::vector<float>
   inferWithCurrentSession(const std::vector<std::vector<float>> &mel);
 
-  // True when createSessionOptions() appended the DirectML provider, so
-  // loadModel() knows a session-creation failure is worth a CPU retry.
+  // True when buildSessionOptions() appended the DirectML provider, so
+  // the ladder knows the DirectML rungs are really on the GPU (and can
+  // skip the rest of them when the provider cannot be appended at all).
   bool directMLProviderAppended = false;
 
-  Ort::SessionOptions createSessionOptions();
-  Ort::SessionOptions createCpuFallbackSessionOptions();
+  Ort::SessionOptions buildSessionOptions(bool wantDirectML,
+                                          GraphOptimizationLevel optLevel);
 #endif
 };

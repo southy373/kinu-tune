@@ -1729,9 +1729,18 @@ void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
 
   if (minMidi != std::numeric_limits<float>::max() && maxMidi >= minMidi)
   {
-    maxMidi = std::min(maxMidi + 1.0f, static_cast<float>(MAX_MIDI_NOTE));
-    pianoRoll.fitPitchRangeToView(minMidi, maxMidi);
+    const auto range = pitchRangeWithFitMargin(minMidi, maxMidi);
+    pianoRoll.fitPitchRangeToView(range.first, range.second);
   }
+}
+
+std::pair<float, float> MainComponent::pitchRangeWithFitMargin(float minMidi,
+                                                               float maxMidi)
+{
+  return {std::max(static_cast<float>(MIN_MIDI_NOTE),
+                   minMidi - kFitPitchMarginSemitones),
+          std::min(static_cast<float>(MAX_MIDI_NOTE),
+                   maxMidi + kFitPitchMarginSemitones)};
 }
 
 void MainComponent::exportFile()

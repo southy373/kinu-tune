@@ -334,6 +334,17 @@ private:
   void reinterpolateUV(int startFrame,
                        int endFrame); // Re-infer UV regions using FCPE
   void notifyProjectDataChanged();
+  // Headroom added on both sides of the analyzed pitch range when a fit
+  // frames it (the initial fit on opening a project, Shift+F, the
+  // vertical auto-zoom): batch 3 fitted the bare range, which opened
+  // with the segments flush against the top and bottom edges and read
+  // as too large. Three semitones a side, recorded in MODIFICATIONS.md.
+  static constexpr float kFitPitchMarginSemitones = 3.0f;
+  // The analyzed [min, max] MIDI range widened by the margin above and
+  // clamped to the representable pitch space. Static so tests can pin
+  // the math without standing up the whole editor.
+  static std::pair<float, float> pitchRangeWithFitMargin(float minMidi,
+                                                         float maxMidi);
   void fitAnalyzedPitchRangeToView(Project &project);
   // Whole timeline horizontally, the sung range vertically (Shift+F).
   void zoomToFull();

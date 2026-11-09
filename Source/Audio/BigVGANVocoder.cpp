@@ -198,6 +198,17 @@ bool BigVGANVocoder::isOnnxRuntimeAvailable()
 
 bool BigVGANVocoder::loadModel(const juce::File &modelPath)
 {
+  // The lower-opset variant ships next to the main model; a hand-placed
+  // copy is found the same way. Callers that resolve model paths through
+  // PlatformPaths pass it explicitly instead (the two-arg overload).
+  return loadModel(
+      modelPath,
+      modelPath.getSiblingFile("bigvgan_v2_44khz_128band_opset17.onnx"));
+}
+
+bool BigVGANVocoder::loadModel(const juce::File &modelPath,
+                               const juce::File &opset17ModelPath)
+{
 #ifdef HAVE_ONNXRUNTIME
   if (!onnxEnv)
   {
@@ -235,62 +246,19 @@ bool BigVGANVocoder::loadModel(const juce::File &modelPath)
 
   log("Loading model from: " + modelPath.getFullPathName().toStdString());
   modelFile = modelPath;
+  opset17ModelFile = (opset17ModelPath.existsAsFile() &&
+                      opset17ModelPath != modelPath)
+                         ? opset17ModelPath
+                         : juce::File{};
+  log(opset17ModelFile.existsAsFile()
+          ? "Opset 17 variant present: " +
+                opset17ModelFile.getFullPathName().toStdString()
+          : "Opset 17 variant not present; the ladder runs without it");
 
-  bool created = false;
-  try
-  {
-    created = createSession(false);
-  }
-  catch (const Ort::Exception &e)
-  {
-    if (!directMLProviderAppended)
-    {
-      log("Failed to load ONNX model: " + std::string(e.what()));
-      lastError = std::string("Failed to load ONNX model: ") + e.what();
-      usingGpuProvider = false;
-      activeProvider = "CPU";
-      loaded = false;
-      return false;
-    }
-
-    // Session creation is the one place a DirectML failure was already
-    // survived before batch 3: retry the same model on a CPU session.
-    log("Failed to create session with DirectML: " +
-        std::string(e.what()));
-    log("Retrying BigVGAN session with CPU");
-
-    try
-    {
-      created = createSession(true);
-    }
-    catch (const Ort::Exception &cpuError)
-    {
-      log("Failed to load ONNX model: " + std::string(cpuError.what()));
-      lastError = std::string("Failed to load ONNX model: ") + cpuError.what();
-      usingGpuProvider = false;
-      activeProvider = "CPU";
-      loaded = false;
-      return false;
-    }
-  }
-
-  if (!created)
-  {
-    log("BigVGAN: unexpected model signature (inputs=" +
-        std::to_string(inputNames.size()) +
-        ", outputs=" + std::to_string(outputNames.size()) + ")");
-    lastError = "Unexpected model signature";
-    usingGpuProvider = false;
-    activeProvider = "CPU";
-    loaded = false;
-    return false;
-  }
-
-  loaded = true;
-  log("BigVGAN: ONNX model loaded successfully");
-  return true;
+  return establishSession();
 #else
   (void)modelPath;
+  (void)opset17ModelPath;
   log("BigVGAN: ONNX Runtime is not available; model inference is disabled");
   lastError = "ONNX Runtime is not available";
   loaded = false;
@@ -299,22 +267,22 @@ bool BigVGANVocoder::loadModel(const juce::File &modelPath)
 }
 
 #ifdef HAVE_ONNXRUNTIME
-bool BigVGANVocoder::createSession(bool cpuOnly)
+bool BigVGANVocoder::createSessionFor(const juce::File &file,
+                                      bool wantDirectML,
+                                      GraphOptimizationLevel optLevel)
 {
   Ort::SessionOptions sessionOptions =
-      cpuOnly ? createCpuFallbackSessionOptions() : createSessionOptions();
-  const bool wantGpu = !cpuOnly && directMLProviderAppended;
+      buildSessionOptions(wantDirectML, optLevel);
+  const bool useGpu = wantDirectML && directMLProviderAppended;
 
 #ifdef _WIN32
-  const std::wstring modelPathW(
-      modelFile.getFullPathName().toWideCharPointer());
+  const std::wstring modelPathW(file.getFullPathName().toWideCharPointer());
   onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
                                                sessionOptions);
 #else
-  const std::string modelPathStr =
-      modelFile.getFullPathName().toStdString();
-  onnxSession = std::make_unique<Ort::Session>(
-      *onnxEnv, modelPathStr.c_str(), sessionOptions);
+  const std::string modelPathStr = file.getFullPathName().toStdString();
+  onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathStr.c_str(),
+                                               sessionOptions);
 #endif
 
   size_t numInputs = onnxSession->GetInputCount();
@@ -347,10 +315,182 @@ bool BigVGANVocoder::createSession(bool cpuOnly)
     return false;
   }
 
-  usingGpuProvider = wantGpu;
+  usingGpuProvider = useGpu;
   activeProvider = usingGpuProvider ? "DirectML" : "CPU";
-  log("BigVGAN execution provider: " + activeProvider);
+  activeModelFile = file;
+  log("BigVGAN execution provider: " + activeProvider + " (model: " +
+      file.getFileName().toStdString() + ")");
   return true;
+}
+
+bool BigVGANVocoder::probeCurrentSession(std::string &error)
+{
+  // The smallest mel that still runs every node of the graph: BigVGAN is
+  // fully convolutional, so 16 frames exercise the same nodes (including
+  // every ConvTranspose) as a full chunk, at a fraction of the cost.
+  constexpr size_t kProbeFrames = 16;
+  std::vector<std::vector<float>> mel(
+      kProbeFrames, std::vector<float>(static_cast<size_t>(numMels)));
+  for (size_t frame = 0; frame < kProbeFrames; ++frame)
+    for (int m = 0; m < numMels; ++m)
+      mel[frame][static_cast<size_t>(m)] =
+          -6.0f + 0.05f * static_cast<float>((frame * 31 + m * 7) % 97);
+
+  try
+  {
+    const auto out = inferChunkLocked(mel);
+    const size_t expected = kProbeFrames * static_cast<size_t>(hopSize);
+    if (out.size() != expected)
+    {
+      error = "probe produced " + std::to_string(out.size()) +
+              " samples, expected " + std::to_string(expected);
+      return false;
+    }
+    return true;
+  }
+  catch (const Ort::Exception &e)
+  {
+    error = e.what();
+    return false;
+  }
+}
+
+bool BigVGANVocoder::establishSession()
+{
+  struct Rung
+  {
+    std::string label;
+    juce::File file;
+    bool directML;
+    GraphOptimizationLevel optLevel;
+  };
+
+  std::vector<Rung> ladder;
+#ifdef USE_DIRECTML
+  ladder.push_back({"DirectML + main model (opset 20) + full graph "
+                    "optimization",
+                    modelFile, true, GraphOptimizationLevel::ORT_ENABLE_ALL});
+  ladder.push_back({"DirectML + main model (opset 20) + basic graph "
+                    "optimization",
+                    modelFile, true,
+                    GraphOptimizationLevel::ORT_ENABLE_BASIC});
+  if (opset17ModelFile.existsAsFile())
+  {
+    ladder.push_back({"DirectML + opset 17 model + full graph optimization",
+                      opset17ModelFile, true,
+                      GraphOptimizationLevel::ORT_ENABLE_ALL});
+    ladder.push_back({"DirectML + opset 17 model + basic graph optimization",
+                      opset17ModelFile, true,
+                      GraphOptimizationLevel::ORT_ENABLE_BASIC});
+  }
+#endif
+  ladder.push_back({"CPU + main model (opset 20) + full graph optimization",
+                    modelFile, false,
+                    GraphOptimizationLevel::ORT_ENABLE_ALL});
+
+  log("BigVGAN session ladder: " + std::to_string(ladder.size()) +
+      " rung(s)");
+  const auto ladderStart = std::chrono::high_resolution_clock::now();
+  std::string lastFailure;
+  bool directMlAppendFailed = false;
+
+  for (size_t i = 0; i < ladder.size(); ++i)
+  {
+    const auto &rung = ladder[i];
+    if (rung.directML && directMlAppendFailed)
+    {
+      log("Session ladder rung " + std::to_string(i + 1) + " skipped (" +
+          rung.label + "): the DirectML provider could not be appended");
+      continue;
+    }
+
+    const auto rungStart = std::chrono::high_resolution_clock::now();
+    const auto elapsedMs = [&rungStart]()
+    {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::high_resolution_clock::now() - rungStart)
+          .count();
+    };
+    log("Session ladder rung " + std::to_string(i + 1) + "/" +
+        std::to_string(ladder.size()) + ": trying " + rung.label);
+
+    bool signatureOk = false;
+    try
+    {
+      signatureOk =
+          createSessionFor(rung.file, rung.directML, rung.optLevel);
+    }
+    catch (const Ort::Exception &e)
+    {
+      lastFailure = std::string("session creation failed: ") + e.what();
+      log("Session ladder rung " + std::to_string(i + 1) + " failed (" +
+          rung.label + "): " + lastFailure + " [" +
+          std::to_string(elapsedMs()) + "ms]");
+      onnxSession.reset();
+      if (rung.directML && !directMLProviderAppended)
+        directMlAppendFailed = true;
+      continue;
+    }
+
+    if (rung.directML && !directMLProviderAppended)
+    {
+      // The provider could not be appended at all, so this "DirectML"
+      // session is a CPU session in disguise and the remaining DirectML
+      // rungs would test the same thing again. The CPU rung below is
+      // the same configuration as rung 1, so stop the ladder here and
+      // let it run.
+      directMlAppendFailed = true;
+      log("DirectML provider was not appended; the remaining DirectML "
+          "rungs are skipped and this session is treated as the CPU rung");
+    }
+
+    if (!signatureOk)
+    {
+      lastFailure = "unexpected model signature (inputs=" +
+                    std::to_string(inputNames.size()) +
+                    ", outputs=" + std::to_string(outputNames.size()) + ")";
+      log("Session ladder rung " + std::to_string(i + 1) + " failed (" +
+          rung.label + "): " + lastFailure + " [" +
+          std::to_string(elapsedMs()) + "ms]");
+      continue;
+    }
+
+    std::string probeError;
+    if (!probeCurrentSession(probeError))
+    {
+      lastFailure = "probe inference failed: " + probeError;
+      log("Session ladder rung " + std::to_string(i + 1) + " failed (" +
+          rung.label + "): " + lastFailure + " [" +
+          std::to_string(elapsedMs()) + "ms]");
+      onnxSession.reset();
+      usingGpuProvider = false;
+      activeProvider = "CPU";
+      continue;
+    }
+
+    loaded = true;
+    lastError.clear();
+    const auto totalMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::high_resolution_clock::now() - ladderStart)
+            .count();
+    log("Session ladder: adopted rung " + std::to_string(i + 1) + " (" +
+        rung.label + "); probe passed in " +
+        std::to_string(elapsedMs()) + "ms, ladder total " +
+        std::to_string(totalMs) + "ms");
+    log("BigVGAN: ONNX model loaded successfully");
+    return true;
+  }
+
+  onnxSession.reset();
+  usingGpuProvider = false;
+  activeProvider = "CPU";
+  loaded = false;
+  lastError = "No BigVGAN session configuration could run inference" +
+              (lastFailure.empty() ? std::string()
+                                   : "; last failure: " + lastFailure);
+  log("Session ladder: all rungs failed. " + lastError);
+  return false;
 }
 #endif
 
@@ -374,7 +514,15 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
   }
 
   auto waveform = inferWithCurrentSession(mel);
-  if (!waveform.empty() || !usingGpuProvider || isShuttingDown.load())
+  if (!waveform.empty())
+  {
+    // A successful render clears any earlier failure: lastError feeds
+    // the editor's render status, and a stale reason would otherwise be
+    // paired with a later, unrelated failure (batch 3 review, minor 1).
+    lastError.clear();
+    return waveform;
+  }
+  if (!usingGpuProvider || isShuttingDown.load())
     return waveform;
 
   // Batch 3: inference-level CPU fallback. A DirectML session can be
@@ -382,14 +530,21 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
   // device-0 adapter on a multi-GPU machine is not necessarily one that
   // can run this graph, and no CI runner exercises a real GPU, so
   // creation-time fallback alone left the AI engine dead on such
-  // machines. Recreate the session on the CPU and retry the whole
-  // synthesis once; the session stays on the CPU afterwards.
+  // machines. The batch 3.1 session ladder probes for this at load
+  // time, but a real chunk is much longer than the probe and can still
+  // fail where the probe passed, so the retry stays: recreate the
+  // session on the CPU (same model file the live session was built
+  // from) and retry the whole synthesis once; the session stays on the
+  // CPU afterwards.
   const std::string gpuError = lastError;
   log("DirectML inference failed (" + gpuError +
       "); recreating the session on CPU and retrying");
+  const juce::File &fallbackFile =
+      activeModelFile.existsAsFile() ? activeModelFile : modelFile;
   try
   {
-    if (!createSession(true))
+    if (!createSessionFor(fallbackFile, false,
+                          GraphOptimizationLevel::ORT_ENABLE_ALL))
     {
       lastError = "DirectML inference failed (" + gpuError +
                   "); CPU fallback session has an unexpected signature";
@@ -410,6 +565,8 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
   if (waveform.empty())
     lastError = "Inference failed on DirectML (" + gpuError +
                 ") and on CPU (" + lastError + ")";
+  else
+    lastError.clear();
   return waveform;
 #else
   log("ONNX Runtime is not available");
@@ -551,65 +708,61 @@ std::vector<float> BigVGANVocoder::inferChunkLocked(
   return waveform;
 }
 
-Ort::SessionOptions BigVGANVocoder::createSessionOptions()
+Ort::SessionOptions
+BigVGANVocoder::buildSessionOptions(bool wantDirectML,
+                                    GraphOptimizationLevel optLevel)
 {
   Ort::SessionOptions sessionOptions;
-  sessionOptions.SetGraphOptimizationLevel(
-      GraphOptimizationLevel::ORT_ENABLE_ALL);
+  sessionOptions.SetGraphOptimizationLevel(optLevel);
   sessionOptions.EnableMemPattern();
   sessionOptions.EnableCpuMemArena();
 
   directMLProviderAppended = false;
 
 #ifdef USE_DIRECTML
-  // DirectML build: run BigVGAN on the GPU, in the same way as the NSF
-  // vocoder (Vocoder::createSessionOptions). GPU-backed providers run
-  // best with minimal ORT CPU thread pools.
-  sessionOptions.SetIntraOpNumThreads(1);
-  sessionOptions.SetInterOpNumThreads(1);
-  try
+  if (wantDirectML)
   {
-    const OrtApi &ortApi = Ort::GetApi();
-    const OrtDmlApi *ortDmlApi = nullptr;
-    Ort::ThrowOnError(ortApi.GetExecutionProviderApi(
-        "DML", ORT_API_VERSION,
-        reinterpret_cast<const void **>(&ortDmlApi)));
+    // DirectML build: run BigVGAN on the GPU, in the same way as the NSF
+    // vocoder (Vocoder::createSessionOptions). GPU-backed providers run
+    // best with minimal ORT CPU thread pools.
+    sessionOptions.SetIntraOpNumThreads(1);
+    sessionOptions.SetInterOpNumThreads(1);
+    try
+    {
+      const OrtApi &ortApi = Ort::GetApi();
+      const OrtDmlApi *ortDmlApi = nullptr;
+      Ort::ThrowOnError(ortApi.GetExecutionProviderApi(
+          "DML", ORT_API_VERSION,
+          reinterpret_cast<const void **>(&ortDmlApi)));
 
-    sessionOptions.DisableMemPattern();
-    sessionOptions.SetExecutionMode(ORT_SEQUENTIAL);
+      sessionOptions.DisableMemPattern();
+      sessionOptions.SetExecutionMode(ORT_SEQUENTIAL);
 
-    Ort::ThrowOnError(ortDmlApi->SessionOptionsAppendExecutionProvider_DML(
-        sessionOptions, /*device_id=*/0));
-    directMLProviderAppended = true;
-    log("DirectML execution provider added (device 0)");
-  }
-  catch (const Ort::Exception &e)
-  {
-    log("Failed to add DirectML provider: " + std::string(e.what()));
-    log("Falling back to CPU");
-  }
+      Ort::ThrowOnError(ortDmlApi->SessionOptionsAppendExecutionProvider_DML(
+          sessionOptions, /*device_id=*/0));
+      directMLProviderAppended = true;
+      log("DirectML execution provider added (device 0)");
+    }
+    catch (const Ort::Exception &e)
+    {
+      log("Failed to add DirectML provider: " + std::string(e.what()));
+      log("Falling back to CPU");
+    }
 
-  if (!directMLProviderAppended)
-  {
-    // The provider could not be appended, so this session runs on the
-    // CPU: undo the settings DirectML needed changed.
-    sessionOptions.EnableMemPattern();
-    sessionOptions.SetExecutionMode(ORT_PARALLEL);
-    sessionOptions.SetIntraOpNumThreads(bigVganCpuThreadCount());
+    if (!directMLProviderAppended)
+    {
+      // The provider could not be appended, so this session runs on the
+      // CPU: undo the settings DirectML needed changed.
+      sessionOptions.EnableMemPattern();
+      sessionOptions.SetExecutionMode(ORT_PARALLEL);
+      sessionOptions.SetIntraOpNumThreads(bigVganCpuThreadCount());
+    }
+    return sessionOptions;
   }
-#else
-  sessionOptions.SetIntraOpNumThreads(bigVganCpuThreadCount());
 #endif
-  return sessionOptions;
-}
 
-Ort::SessionOptions BigVGANVocoder::createCpuFallbackSessionOptions()
-{
-  Ort::SessionOptions sessionOptions;
-  sessionOptions.SetGraphOptimizationLevel(
-      GraphOptimizationLevel::ORT_ENABLE_ALL);
-  sessionOptions.EnableMemPattern();
-  sessionOptions.EnableCpuMemArena();
+  // CPU session (the ladder's last rung, the inference-time fallback,
+  // and every non-DirectML build): the ~70% thread cap is unchanged.
   sessionOptions.SetIntraOpNumThreads(bigVganCpuThreadCount());
   return sessionOptions;
 }
