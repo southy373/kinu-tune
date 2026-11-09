@@ -1236,10 +1236,13 @@ void ParameterPanel::refreshVocoderToggleAvailability()
         vocoderEngineToggle.setTooltip(TR("tooltip.engine_vocoder"));
 }
 
-void ParameterPanel::setRenderStatus(RenderStatus status, SynthesisEngineType engine)
+void ParameterPanel::setRenderStatus(RenderStatus status,
+                                     SynthesisEngineType engine,
+                                     const juce::String& detail)
 {
     renderStatus = status;
     renderStatusEngine = engine;
+    renderStatusDetail = detail;
     refreshRenderStatusText();
 }
 
@@ -1256,8 +1259,22 @@ void ParameterPanel::refreshRenderStatusText()
         case RenderStatus::Failed:    key = "status.render_failed"; break;
         case RenderStatus::None:      break;
     }
-    renderStatusLabel.setText(TR(key).replace("{engine}", engineName),
-                              juce::dontSendNotification);
+    auto text = TR(key).replace("{engine}", engineName);
+    if (renderStatus == RenderStatus::Failed && renderStatusDetail.isNotEmpty())
+    {
+        // The line is short and the panel narrow: show the head of the
+        // reason here and the whole of it as a tooltip.
+        auto shortened = renderStatusDetail;
+        if (shortened.length() > 48)
+            shortened = shortened.substring(0, 48) + juce::String::fromUTF8("\xe2\x80\xa6");
+        text += " - " + shortened;
+        renderStatusLabel.setTooltip(renderStatusDetail);
+    }
+    else
+    {
+        renderStatusLabel.setTooltip({});
+    }
+    renderStatusLabel.setText(text, juce::dontSendNotification);
 }
 
 void ParameterPanel::setRenderDeviceOptions(const juce::StringArray& deviceNames,

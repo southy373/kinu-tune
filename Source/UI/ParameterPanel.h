@@ -56,7 +56,11 @@ public:
     // what produced the audio, not merely which radio is selected - the two
     // used to differ in the plug-in. Written by MainComponent::showRenderStatus.
     enum class RenderStatus { None, Rendering, Done, Failed };
-    void setRenderStatus(RenderStatus status, SynthesisEngineType engine);
+    // `detail` carries the failure reason for RenderStatus::Failed when
+    // the engine reported one; it is appended to the status line in
+    // shortened form and shown in full as the line's tooltip.
+    void setRenderStatus(RenderStatus status, SynthesisEngineType engine,
+                         const juce::String& detail = {});
 
     // ===== Rendering card: inference device =====
     // The row only earns its space when there is a choice to make, so it shows
@@ -234,6 +238,7 @@ private:
     juce::Label renderStatusLabel;
     RenderStatus renderStatus = RenderStatus::None;
     SynthesisEngineType renderStatusEngine = defaultSynthesisEngineType();
+    juce::String renderStatusDetail;
     void refreshRenderStatusText();
 
     // Declared last so it is torn down before the widgets it refreshes.

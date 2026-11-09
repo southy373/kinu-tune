@@ -2649,9 +2649,14 @@ void MainComponent::rerenderEditedNotes()
 
 void MainComponent::showRenderStatus(ParameterPanel::RenderStatus status)
 {
+  juce::String detail;
+  if (status == ParameterPanel::RenderStatus::Failed && editorController)
+    detail = editorController->getLastSynthesisError();
   parameterPanel.setRenderStatus(
-      status, editorController ? editorController->getSynthesisEngineType()
-                               : defaultSynthesisEngineType());
+      status,
+      editorController ? editorController->getSynthesisEngineType()
+                       : defaultSynthesisEngineType(),
+      detail);
 }
 
 void MainComponent::onNoteSelected(Note *note)

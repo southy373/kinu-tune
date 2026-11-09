@@ -761,6 +761,16 @@ std::vector<float> IncrementalSynthesizer::buildPitchRatioCurve(
   return ratio;
 }
 
+std::string IncrementalSynthesizer::getLastSynthesisError() const {
+  std::lock_guard<std::mutex> lock(lastSynthesisErrorMutex);
+  return lastSynthesisError;
+}
+
+void IncrementalSynthesizer::setLastSynthesisError(std::string error) {
+  std::lock_guard<std::mutex> lock(lastSynthesisErrorMutex);
+  lastSynthesisError = std::move(error);
+}
+
 void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                                               CompleteCallback onComplete) {
   // VariAudio Changes Bypass: no resynthesis happens at all. The composite
@@ -2052,20 +2062,30 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
     // its mel. The result rejoins through the same callback as every
     // other engine, so blending and committing stay engine-agnostic.
     auto *bigVgan = bigVganVocoder;
+    auto *synth = this;
     const int renderSampleRate = audioData.sampleRate;
     psola.renderAsync(
         std::move(dspRequest),
-        [bigVgan, renderSampleRate, onRendered = std::move(onRendered),
+        [bigVgan, synth, renderSampleRate,
+         onRendered = std::move(onRendered),
          capturedCancelFlag](std::vector<float> scratch) mutable {
           if (scratch.empty() ||
               (capturedCancelFlag && capturedCancelFlag->load())) {
             onRendered({});
             return;
           }
-          bigVgan->inferFromWaveformAsync(std::move(scratch),
-                                          renderSampleRate,
-                                          std::move(onRendered),
-                                          capturedCancelFlag);
+          bigVgan->inferFromWaveformAsync(
+              std::move(scratch), renderSampleRate,
+              [bigVgan, synth,
+               onRendered = std::move(onRendered)](
+                  std::vector<float> result) mutable {
+                // An empty BigVGAN result fails the whole render; keep
+                // the vocoder's reason so the UI can show it.
+                if (result.empty())
+                  synth->setLastSynthesisError(bigVgan->getLastError());
+                onRendered(std::move(result));
+              },
+              capturedCancelFlag);
         },
         capturedCancelFlag);
   } else {

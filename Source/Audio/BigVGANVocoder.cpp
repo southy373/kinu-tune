@@ -34,7 +34,10 @@ namespace
 
 BigVGANVocoder::BigVGANVocoder()
 {
-#if PITCHNET_LOGGING_ENABLED
+  // Batch 3: this log is the only record of why an AI render failed on a
+  // user's machine, so it is written in every build. It used to sit
+  // behind PITCHNET_LOGGING_ENABLED, which Release builds turn off -
+  // exactly the builds users run - leaving failures undiagnosable.
   auto logPath = PlatformPaths::getLogFile("bigvgan_" +
                                            AppLogger::getSessionId() + ".txt");
   logFile = std::make_unique<std::ofstream>(
@@ -48,7 +51,6 @@ BigVGANVocoder::BigVGANVocoder()
              << std::ctime(&time) << " ==========\n";
     logFile->flush();
   }
-#endif
 
 #ifdef HAVE_ONNXRUNTIME
   if (!OnnxRuntime::isAvailable())
@@ -160,7 +162,6 @@ BigVGANVocoder::~BigVGANVocoder()
 
 void BigVGANVocoder::log(const std::string &message)
 {
-#if PITCHNET_LOGGING_ENABLED
 #if JUCE_DEBUG
   DBG("[BigVGAN] " + juce::String(message));
 #endif
@@ -184,9 +185,6 @@ void BigVGANVocoder::log(const std::string &message)
              << std::setw(3) << ms.count() << " | " << message << "\n";
     logFile->flush();
   }
-#else
-  (void)message;
-#endif
 }
 
 bool BigVGANVocoder::isOnnxRuntimeAvailable()
@@ -204,6 +202,7 @@ bool BigVGANVocoder::loadModel(const juce::File &modelPath)
   if (!onnxEnv)
   {
     log("ONNX Runtime not initialized");
+    lastError = "ONNX Runtime not initialized";
     return false;
   }
 
@@ -211,136 +210,149 @@ bool BigVGANVocoder::loadModel(const juce::File &modelPath)
   {
     log("BigVGAN: Model file not found: " +
         modelPath.getFullPathName().toStdString());
+    lastError = "Model file not found: " +
+                modelPath.getFullPathName().toStdString();
     return false;
   }
 
-  try
-  {
-    Ort::SessionOptions sessionOptions = createSessionOptions();
-
 #ifdef _WIN32
-    juce::String pathStr = modelPath.getFullPathName();
-    if (pathStr.isEmpty())
-    {
-      log("Model path is empty");
-      return false;
-    }
-    std::wstring modelPathW(pathStr.toWideCharPointer());
-    if (modelPathW.empty() || modelPathW.length() > 32767)
-    {
-      log("Invalid model path length: " +
-          std::to_string(modelPathW.length()));
-      return false;
-    }
-    log("Loading model from: " + pathStr.toStdString());
-    bool usedCpuFallback = false;
-    try
-    {
-      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
-                                                   sessionOptions);
-    }
-    catch (const Ort::Exception &e)
-    {
-      if (!directMLProviderAppended)
-        throw;
-
-      log("Failed to create session with DirectML: " +
-          std::string(e.what()));
-      log("Retrying BigVGAN session with CPU");
-
-      auto cpuOptions = createCpuFallbackSessionOptions();
-      onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
-                                                   cpuOptions);
-      usedCpuFallback = true;
-    }
-#else
-    std::string modelPathStr = modelPath.getFullPathName().toStdString();
-    if (modelPathStr.empty())
-    {
-      log("Model path is empty");
-      return false;
-    }
-    log("Loading model from: " + modelPathStr);
-    bool usedCpuFallback = false;
-    try
-    {
-      onnxSession = std::make_unique<Ort::Session>(
-          *onnxEnv, modelPathStr.c_str(), sessionOptions);
-    }
-    catch (const Ort::Exception &e)
-    {
-      if (!directMLProviderAppended)
-        throw;
-
-      log("Failed to create session with DirectML: " +
-          std::string(e.what()));
-      log("Retrying BigVGAN session with CPU");
-
-      auto cpuOptions = createCpuFallbackSessionOptions();
-      onnxSession = std::make_unique<Ort::Session>(
-          *onnxEnv, modelPathStr.c_str(), cpuOptions);
-      usedCpuFallback = true;
-    }
+  juce::String pathStr = modelPath.getFullPathName();
+  if (pathStr.isEmpty())
+  {
+    log("Model path is empty");
+    lastError = "Model path is empty";
+    return false;
+  }
+  std::wstring modelPathW(pathStr.toWideCharPointer());
+  if (modelPathW.empty() || modelPathW.length() > 32767)
+  {
+    log("Invalid model path length: " +
+        std::to_string(modelPathW.length()));
+    lastError = "Invalid model path";
+    return false;
+  }
 #endif
 
-    size_t numInputs = onnxSession->GetInputCount();
-    inputNameStrings.clear();
-    inputNames.clear();
-    for (size_t i = 0; i < numInputs; ++i)
-    {
-      auto namePtr = onnxSession->GetInputNameAllocated(i, *allocator);
-      inputNameStrings.push_back(namePtr.get());
-    }
-    for (auto &name : inputNameStrings)
-      inputNames.push_back(name.c_str());
+  log("Loading model from: " + modelPath.getFullPathName().toStdString());
+  modelFile = modelPath;
 
-    size_t numOutputs = onnxSession->GetOutputCount();
-    outputNameStrings.clear();
-    outputNames.clear();
-    for (size_t i = 0; i < numOutputs; ++i)
+  bool created = false;
+  try
+  {
+    created = createSession(false);
+  }
+  catch (const Ort::Exception &e)
+  {
+    if (!directMLProviderAppended)
     {
-      auto namePtr = onnxSession->GetOutputNameAllocated(i, *allocator);
-      outputNameStrings.push_back(namePtr.get());
-    }
-    for (auto &name : outputNameStrings)
-      outputNames.push_back(name.c_str());
-
-    if (inputNames.size() != 1 || outputNames.size() != 1)
-    {
-      log("BigVGAN: unexpected model signature (inputs=" +
-          std::to_string(inputNames.size()) +
-          ", outputs=" + std::to_string(outputNames.size()) + ")");
-      onnxSession.reset();
+      log("Failed to load ONNX model: " + std::string(e.what()));
+      lastError = std::string("Failed to load ONNX model: ") + e.what();
       usingGpuProvider = false;
       activeProvider = "CPU";
       loaded = false;
       return false;
     }
 
-    usingGpuProvider = directMLProviderAppended && !usedCpuFallback;
-    activeProvider = usingGpuProvider ? "DirectML" : "CPU";
-    log("BigVGAN execution provider: " + activeProvider);
+    // Session creation is the one place a DirectML failure was already
+    // survived before batch 3: retry the same model on a CPU session.
+    log("Failed to create session with DirectML: " +
+        std::string(e.what()));
+    log("Retrying BigVGAN session with CPU");
 
-    modelFile = modelPath;
-    loaded = true;
-    log("BigVGAN: ONNX model loaded successfully");
-    return true;
+    try
+    {
+      created = createSession(true);
+    }
+    catch (const Ort::Exception &cpuError)
+    {
+      log("Failed to load ONNX model: " + std::string(cpuError.what()));
+      lastError = std::string("Failed to load ONNX model: ") + cpuError.what();
+      usingGpuProvider = false;
+      activeProvider = "CPU";
+      loaded = false;
+      return false;
+    }
   }
-  catch (const Ort::Exception &e)
+
+  if (!created)
   {
-    log("Failed to load ONNX model: " + std::string(e.what()));
+    log("BigVGAN: unexpected model signature (inputs=" +
+        std::to_string(inputNames.size()) +
+        ", outputs=" + std::to_string(outputNames.size()) + ")");
+    lastError = "Unexpected model signature";
     usingGpuProvider = false;
     activeProvider = "CPU";
     loaded = false;
     return false;
   }
+
+  loaded = true;
+  log("BigVGAN: ONNX model loaded successfully");
+  return true;
 #else
   (void)modelPath;
   log("BigVGAN: ONNX Runtime is not available; model inference is disabled");
+  lastError = "ONNX Runtime is not available";
   loaded = false;
   return false;
 #endif
 }
+
+#ifdef HAVE_ONNXRUNTIME
+bool BigVGANVocoder::createSession(bool cpuOnly)
+{
+  Ort::SessionOptions sessionOptions =
+      cpuOnly ? createCpuFallbackSessionOptions() : createSessionOptions();
+  const bool wantGpu = !cpuOnly && directMLProviderAppended;
+
+#ifdef _WIN32
+  const std::wstring modelPathW(
+      modelFile.getFullPathName().toWideCharPointer());
+  onnxSession = std::make_unique<Ort::Session>(*onnxEnv, modelPathW.c_str(),
+                                               sessionOptions);
+#else
+  const std::string modelPathStr =
+      modelFile.getFullPathName().toStdString();
+  onnxSession = std::make_unique<Ort::Session>(
+      *onnxEnv, modelPathStr.c_str(), sessionOptions);
+#endif
+
+  size_t numInputs = onnxSession->GetInputCount();
+  inputNameStrings.clear();
+  inputNames.clear();
+  for (size_t i = 0; i < numInputs; ++i)
+  {
+    auto namePtr = onnxSession->GetInputNameAllocated(i, *allocator);
+    inputNameStrings.push_back(namePtr.get());
+  }
+  for (auto &name : inputNameStrings)
+    inputNames.push_back(name.c_str());
+
+  size_t numOutputs = onnxSession->GetOutputCount();
+  outputNameStrings.clear();
+  outputNames.clear();
+  for (size_t i = 0; i < numOutputs; ++i)
+  {
+    auto namePtr = onnxSession->GetOutputNameAllocated(i, *allocator);
+    outputNameStrings.push_back(namePtr.get());
+  }
+  for (auto &name : outputNameStrings)
+    outputNames.push_back(name.c_str());
+
+  if (inputNames.size() != 1 || outputNames.size() != 1)
+  {
+    onnxSession.reset();
+    usingGpuProvider = false;
+    activeProvider = "CPU";
+    return false;
+  }
+
+  usingGpuProvider = wantGpu;
+  activeProvider = usingGpuProvider ? "DirectML" : "CPU";
+  log("BigVGAN execution provider: " + activeProvider);
+  return true;
+}
+#endif
 
 std::vector<float>
 BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
@@ -356,10 +368,59 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
 #ifdef HAVE_ONNXRUNTIME
   if (!onnxSession || inputNames.empty() || outputNames.empty())
   {
-    log("ONNX session not available");
+    lastError = "ONNX session not available";
+    log(lastError);
     return {};
   }
 
+  auto waveform = inferWithCurrentSession(mel);
+  if (!waveform.empty() || !usingGpuProvider || isShuttingDown.load())
+    return waveform;
+
+  // Batch 3: inference-level CPU fallback. A DirectML session can be
+  // created successfully and still fail on the first real chunk - the
+  // device-0 adapter on a multi-GPU machine is not necessarily one that
+  // can run this graph, and no CI runner exercises a real GPU, so
+  // creation-time fallback alone left the AI engine dead on such
+  // machines. Recreate the session on the CPU and retry the whole
+  // synthesis once; the session stays on the CPU afterwards.
+  const std::string gpuError = lastError;
+  log("DirectML inference failed (" + gpuError +
+      "); recreating the session on CPU and retrying");
+  try
+  {
+    if (!createSession(true))
+    {
+      lastError = "DirectML inference failed (" + gpuError +
+                  "); CPU fallback session has an unexpected signature";
+      log(lastError);
+      return {};
+    }
+  }
+  catch (const Ort::Exception &e)
+  {
+    lastError = "DirectML inference failed (" + gpuError +
+                "); CPU fallback session could not be created: " +
+                std::string(e.what());
+    log(lastError);
+    return {};
+  }
+
+  waveform = inferWithCurrentSession(mel);
+  if (waveform.empty())
+    lastError = "Inference failed on DirectML (" + gpuError +
+                ") and on CPU (" + lastError + ")";
+  return waveform;
+#else
+  log("ONNX Runtime is not available");
+  return {};
+#endif
+}
+
+#ifdef HAVE_ONNXRUNTIME
+std::vector<float> BigVGANVocoder::inferWithCurrentSession(
+    const std::vector<std::vector<float>> &mel)
+{
   const size_t numFrames = mel.size();
   const size_t totalSamples = numFrames * static_cast<size_t>(hopSize);
   const auto startTotal = std::chrono::high_resolution_clock::now();
@@ -386,8 +447,9 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
       auto chunkWav = inferChunkLocked(chunkMel);
       if (chunkWav.empty())
       {
-        log("Chunk inference failed at frame " +
-            std::to_string(chunkStart));
+        lastError = "Chunk inference failed at frame " +
+                    std::to_string(chunkStart);
+        log(lastError);
         return {};
       }
 
@@ -398,8 +460,9 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
           (chunkEnd - chunkStart) * static_cast<size_t>(hopSize);
       if (skipSamples + keepSamples > chunkWav.size())
       {
-        log("Chunk output shorter than expected at frame " +
-            std::to_string(chunkStart));
+        lastError = "Chunk output shorter than expected at frame " +
+                    std::to_string(chunkStart);
+        log(lastError);
         return {};
       }
       waveform.insert(waveform.end(),
@@ -422,14 +485,12 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
   }
   catch (const Ort::Exception &e)
   {
-    log("ONNX inference failed: " + std::string(e.what()));
+    lastError = std::string("ONNX inference failed: ") + e.what();
+    log(lastError);
     return {};
   }
-#else
-  log("ONNX Runtime is not available");
-  return {};
-#endif
 }
+#endif
 
 #ifdef HAVE_ONNXRUNTIME
 std::vector<float> BigVGANVocoder::inferChunkLocked(

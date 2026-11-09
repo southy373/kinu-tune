@@ -40,6 +40,13 @@ public:
   {
     return incrementalSynth.get();
   }
+  // Reason the last incremental render failed, when the engine reported
+  // one (see IncrementalSynthesizer::getLastSynthesisError).
+  std::string getLastSynthesisError() const
+  {
+    return incrementalSynth ? incrementalSynth->getLastSynthesisError()
+                            : std::string();
+  }
   PlaybackController *getPlaybackController() const
   {
     return playbackController.get();

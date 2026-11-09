@@ -7,6 +7,8 @@
 #include "../Vocoder.h"
 #include "PsolaSynthesizer.h"
 #include <atomic>
+#include <mutex>
+#include <string>
 #include <functional>
 #include <memory>
 #include <thread>
@@ -46,6 +48,10 @@ public:
   void cancel();
   bool isSynthesizing() const { return isBusy.load(); }
 
+  // Why the most recent engine render failed, when the engine reported
+  // one (currently the BigVGAN path). Empty when it did not.
+  std::string getLastSynthesisError() const;
+
 private:
   /// Compute synthesis range: find voiced segments overlapping dirty range,
   /// expand to include complete segments + padding frames.
@@ -66,6 +72,11 @@ private:
   std::vector<float> buildPitchRatioCurve(int startFrame, int endFrame,
                                           const std::vector<double> &sourceFrameMap,
                                           const std::vector<float> &targetF0) const;
+
+  void setLastSynthesisError(std::string error);
+
+  mutable std::mutex lastSynthesisErrorMutex;
+  std::string lastSynthesisError;
 
   Vocoder *vocoder = nullptr;
   BigVGANVocoder *bigVganVocoder = nullptr;

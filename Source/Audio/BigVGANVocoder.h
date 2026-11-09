@@ -73,6 +73,13 @@ public:
   static bool isOnnxRuntimeAvailable();
 
   /**
+   * Why the most recent loadModel() or infer() failed, in plain text
+   * (empty when nothing has failed yet). Surfaced in the editor's render
+   * status so a failed render says why instead of just failing.
+   */
+  std::string getLastError() const { return lastError; }
+
+  /**
    * Synthesize a waveform from a BigVGAN mel spectrogram.
    * @param mel Mel spectrogram [T, 128] in BigVGAN's log scale (BigVGANMel)
    * @return Synthesized waveform of T * hopSize samples, or empty on failure
@@ -128,6 +135,7 @@ private:
   std::string activeProvider = "CPU";
 
   juce::File modelFile;
+  std::string lastError;
   std::unique_ptr<std::ofstream> logFile;
 
   std::atomic<bool> isShuttingDown{false};
@@ -158,6 +166,19 @@ private:
   // Returns (chunkFrames * hopSize) samples, or empty on failure.
   std::vector<float>
   inferChunkLocked(const std::vector<std::vector<float>> &mel);
+
+  // (Re)creates onnxSession for modelFile and refreshes the cached
+  // input/output names and provider state. cpuOnly builds the session
+  // from createCpuFallbackSessionOptions() (no DirectML). Returns false
+  // when the model's signature is not the expected 1-in/1-out; the
+  // Ort::Session constructor's own failures propagate as Ort::Exception.
+  bool createSession(bool cpuOnly);
+
+  // infer()'s chunk loop against the current session. Sets lastError on
+  // failure and returns empty; a shutdown mid-loop also returns empty
+  // but leaves lastError alone (infer() checks isShuttingDown first).
+  std::vector<float>
+  inferWithCurrentSession(const std::vector<std::vector<float>> &mel);
 
   // True when createSessionOptions() appended the DirectML provider, so
   // loadModel() knows a session-creation failure is worth a CPU retry.
