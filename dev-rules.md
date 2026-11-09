@@ -85,7 +85,7 @@
 
 ## 13. インストーラーは zip の中身から作る
 
-- Mac の `.pkg`(`packaging/macos/build-pkg.sh`)と Windows のインストーラー(`packaging/windows/KinuTune.iss`、`.github/workflows/windows-installer.yml`)は、配布する zip を展開したものから作る。インストーラーのためだけにビルドし直さない。zip とインストーラーの中身が同じだと言えるのはこのため
+- Mac の `.pkg`(`packaging/macos/build-pkg.sh`)と Windows のインストーラー(`packaging/windows/PureTune.iss`、`.github/workflows/windows-installer.yml`)は、配布する zip を展開したものから作る。インストーラーのためだけにビルドし直さない。zip とインストーラーの中身が同じだと言えるのはこのため
 - Mac は利用者のホームの中(手で入れる手順と同じ場所)に入れる。管理者のパスワードが要らず、手で入れたものを上書きする。`/Library` に入れると、手で入れた `~/Library` のものと2つ並ぶ
 - Mac の `.pkg` では、同じ識別子のバンドルが別の場所にあるとインストーラーがそこへ入れてしまう(relocation)。`build-pkg.sh` は `BundleIsRelocatable` を切っている。部品を足す時も同じ関数を通す
 - macOS はこの Mac で作ったファイルに消せない属性(`com.apple.provenance`)を付け、`pkgbuild` はそれを「._」のファイルとして中身に入れる。`build-pkg.sh` は中身を cpio と mkbom で作り直して取り除き、仕上がった中身に残っていれば失敗する

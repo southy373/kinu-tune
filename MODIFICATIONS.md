@@ -15,6 +15,114 @@ The full history of the changes is in the git log of this repository.
 
 ## Summary of changes
 
+### Batch 3 (Pure Tune)
+
+Trial feedback on the batch-2 build, implemented as one batch.
+
+- **Rebrand and folder separation.** The product is Pure Tune
+  everywhere user-visible: the toolbar logo, splash and application
+  strings, all six localisations, error messages. `PlatformPaths`'
+  product folder is "Pure Tune", so settings and logs live in
+  `%APPDATA%\Pure Tune` (macOS `~/Library/Pure Tune/` etc.) and
+  release builds load models from `%PROGRAMDATA%\Keinoaza\Pure
+  Tune\models` - fully separate from the shared Kinu Tune folders,
+  which are left untouched. The Windows installer script is renamed
+  `packaging/windows/PureTune.iss`, installs the models into the new
+  folder, and at uninstall time offers (default: No) to also delete
+  Pure Tune's own models and settings folders; the old
+  `packaging/windows/PitchNet.iss`, which only held the upstream
+  update-check URL, is deleted. Internal identifiers are deliberately
+  NOT renamed (the `VariAudioInspector` class and file names, test
+  names, provenance comments): they are not user-visible and renaming
+  them would churn the whole tree. Caveat: an elevated uninstall
+  resolves `{userappdata}` to the elevating user's profile.
+- **Dead code.** `checkForUpdatesOnLaunch` and everything it dragged
+  in (version helpers, the update dialog, the skipped-version
+  setting, the `update.*` strings, the sessionloops.com URL) are
+  removed; no reference remains.
+- **AI resynthesis failure handling.** BigVGAN inference now falls
+  back at the inference level, not just at session creation: if a
+  chunk fails or throws on a DirectML session, the session is
+  recreated on CPU and the whole synthesis retried once. The BigVGAN
+  log file is written in all builds, and a failed render's reason is
+  carried to the Rendering card's status line (full text as a
+  tooltip) through IncrementalSynthesizer's last-error slot. The
+  AI engine's availability check includes ONNX Runtime availability.
+- **UI moves.** The project-wide pitch % / formant / length % faders
+  moved from the Rendering/Time cards to a new Global card at the
+  top of the left inspector column. Changes Bypass is now a simple
+  power-symbol toggle in the toolbar, next to the live-audition
+  toggle (the labelled Rendering-card switch is gone). The Language
+  card sits at the bottom of the right panel. Both side panels start
+  open - read as: the parameter panel starts shown and the left
+  slide panel starts expanded (the inspector column itself is
+  always visible). The timeline display defaults to Time (it is not
+  serialised, so this is the default in the Project macros, the
+  panel and the piano-roll fallback alike). Opening a project fits
+  all segments once (horizontal fit + pitch-range fit, via the
+  existing zoom-to-full). The wheel zoom step doubled (0.3 to 0.6
+  per notch, one shared constant).
+- **Length % rework.** Scaling is anchored at the earliest segment
+  start, which never moves; only the tail stretches or shrinks.
+  `Project::getOutputFrameCount()` defines the output grid (analysis
+  span scaled around the anchor, extended to cover every note end)
+  and everything renders against it: the F0 dirty range, the
+  adjusted-F0 reads past the dense grid (composed from the covering
+  note), the synthesizer's range clamping, blend-mask voiced-ness
+  past the grid (note coverage), the NSF mel range, and the
+  composite waveform, which grows for a stretched tail and is
+  trimmed back when a render reaches a shrunken output end. This
+  fixes both the drift and the "200% = silence" failure. Projects
+  saved by the pre-anchor build re-derive their base table with a
+  small one-time error bounded by the first segment's offset. Limit:
+  what the host plays past the original clip/event end is still the
+  host's business (DOP only appends a fixed tail), so a stretched
+  render can exist in the project beyond what an event plays.
+- **Pitch-line gaps.** Speech segmentation bridges F0 drop-outs up
+  to 6 frames (~70 ms, was 3). The timing source map is now bridged
+  across the gaps between retimed notes (linear between the
+  neighbouring notes' map values) and the NSF mel path bridges the
+  same way, so joins under time scaling no longer jump between
+  unrelated source frames. Honest limits: this removes the map
+  discontinuity; it cannot invent pitch where the analysis found
+  none, and gaps inside a note's own source span are unchanged.
+- **Operations.** Final modifier map on the piano roll:
+  - Alt+click on a segment: split at the pointer. Alt on a segment
+    edge: boundary drag. Alt on the tilt handles: rotate. (All
+    unchanged Select-mode behaviour; Alt-double-click on empty
+    canvas still fits the view.)
+  - Ctrl+Alt held: freehand drawing tool (borrowed for the gesture).
+  - Ctrl+Alt+Shift held: stretch (timing) tool, likewise borrowed.
+  - Ctrl+click: toggle the segment in the selection. Ctrl held
+    during a segment pitch drag: fine (snap-off) drag. Shift+Ctrl:
+    seek / scrub. Middle-drag: pan. Wheel: zoom; Shift+Ctrl+wheel:
+    vertical zoom.
+  - Removed: the batch-2 Alt zoom rectangle and Alt-click zoom-out,
+    and the Ctrl-hold zoom drag (with their cursors). An Alt+drag on
+    a segment is a split press followed by no drag, as before; the
+    relative-snap Alt drag variant is gone with the rectangle.
+  - Redo is Ctrl+Shift+Z; Ctrl+Y remains as an alias (Mac already
+    used Cmd+Shift+Z). No key-assignment settings screen.
+  - The pitch-correction fader is bipolar (-100..100): negative
+    values push the pitch away from the target by that share of the
+    sung deviation, as a fine adjust. `correctionShare` covers
+    [-1, 1] with dust snaps at the landmarks; a pitch sitting
+    further from its target than sung now reads as that negative
+    value instead of 0 (the reference-carrying rule for other edits
+    is unchanged). The on-canvas Correct Pitch handle keeps its
+    previous behaviour.
+  - Freehand drawing applies immediately: stroke release commits a
+    normal undoable action; the confirmation panel is deleted.
+    Erasing (right-click / double-click) a committed drawing resets
+    the +-10-frame window to the note's analysed contour as its own
+    undoable action, since after a commit the drawing lives in the
+    note's centre and regenerated base curve.
+- **Insert trial removed.** The batch-2 streaming insert prototype
+  (StreamingPitchShifter, its APVTS parameters, InsertEffectView,
+  the processBlock early return, its latency reporting and tests)
+  is deleted; non-ARA use is the upstream capture/import editing
+  workflow again, with latency 0 in both modes.
+
 ### Identity
 - Product name Kinu Tune, vendor Keinoaza, plugin codes `Kein` / `Kntu`
   (`Kntd` for development builds), bundle id `com.keinoaza.kinutune`.
@@ -24,7 +132,9 @@ The full history of the changes is in the git log of this repository.
 - Version number set to 0.1.0, then 0.1.1, 0.1.2, 0.1.3 and 0.1.4.
 
 ### Privacy
-- The online update check of PitchNet is disabled.
+- The online update check of PitchNet is disabled. (Batch 3: the dead
+  update-check code, its orphaned helpers, dialog and strings are
+  removed entirely; the shipped build never contained a caller.)
 - ONNX Runtime telemetry is turned off as far as the documented API allows:
   official ONNX Runtime builds for Windows pass usage events to Windows
   TraceLogging by default, so every ONNX Runtime environment (FCPE and RMVPE
@@ -427,7 +537,7 @@ Post-review fixes (independent review of this batch):
   (`Kinu Tune.component`) besides the VST3.
 - Installers: the upstream PitchNet.pkgproj and PitchNet.iss are not used.
   `packaging/macos/build-pkg.sh` builds a macOS package that installs into the
-  user's home; `packaging/windows/KinuTune.iss` is the Windows installer, built
+  user's home; `packaging/windows/PureTune.iss` is the Windows installer, built
   and checked by `.github/workflows/windows-installer.yml`. Both are made from
   the files of the release zips.
 
@@ -480,7 +590,7 @@ New files:
 - `.github/workflows/windows-release.yml`, `.github/workflows/ci.yml`,
   `packaging/INSTALL-macOS.txt`, `packaging/INSTALL-Windows.txt`, `dev-rules.md`
 - `.github/workflows/windows-installer.yml`, `packaging/macos/build-pkg.sh`,
-  `packaging/macos/installer/*`, `packaging/windows/KinuTune.iss`,
+  `packaging/macos/installer/*`, `packaging/windows/PureTune.iss`,
   `tools/windows/check-installer.ps1`
 - `Source/UI/HarmonyPanel.h`, `Source/UI/HarmonyPanel.cpp`
 - `Source/UI/VariAudioInspector.h`, `Source/UI/VariAudioInspector.cpp`
