@@ -421,6 +421,11 @@ private:
       Note *note); // Recalculate F0 from base pitch + delta after undo/redo
 
   Project *project = nullptr;
+  // Batch 3: the first project with segments fitted to the view, and
+  // whether that one-time initial fit has happened for it. The fit runs
+  // from resized(), the first moment the real size is known.
+  Project *initialFitProject = nullptr;
+  bool initialFitDone = true;
   PitchUndoManager *undoManager = nullptr;
   // VariAudio look and smart controls (see NoteRenderer::setSegmentStyle).
   bool segmentStyle = true;

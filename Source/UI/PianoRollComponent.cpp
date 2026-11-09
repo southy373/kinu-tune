@@ -738,6 +738,31 @@ void PianoRollComponent::resized()
   updateScrollBars();
   updatePreviewButtonBounds();
   updatePitchDrawingConfirmationPopup();
+
+  // Batch 3: opening a project starts with every segment in view
+  // (horizontal fit to the content, vertical fit to the segments' pitch
+  // range - MainComponent::zoomToFull does both). It can only run once
+  // the component has its real size, and analysis may deliver the
+  // segments after the project was bound, so the check stays armed
+  // until a project with segments meets a non-zero size.
+  if (!initialFitDone && project != nullptr &&
+      project == initialFitProject && getVisibleContentWidth() > 0 &&
+      getVisibleContentHeight() > 0)
+  {
+    bool hasSegment = false;
+    for (const auto &note : project->getNotes())
+      if (!note.isRest())
+      {
+        hasSegment = true;
+        break;
+      }
+    if (hasSegment)
+    {
+      initialFitDone = true;
+      if (onZoomFullRequested)
+        onZoomFullRequested();
+    }
+  }
 }
 
 void PianoRollComponent::drawBackgroundWaveform(
@@ -2790,6 +2815,11 @@ void PianoRollComponent::mouseDoubleClick(const juce::MouseEvent &e)
     currentHandler_->mouseDoubleClick(e, adjustedX, adjustedY);
 }
 
+// Batch 3: the wheel zoom step per notch, shared by every wheel-zoom
+// path below (doubled from the previous 0.3 - the user found the old
+// step too slow to be useful).
+constexpr float kWheelZoomStep = 0.6f;
+
 void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
                                         const juce::MouseWheelDetails &wheel)
 {
@@ -2816,7 +2846,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
   if (e.mods.isAltDown() && !e.mods.isCommandDown() && !e.mods.isCtrlDown())
   {
     const float mouseY = static_cast<float>(e.y - headerHeight);
-    const float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
+    const float zoomFactor = 1.0f + wheel.deltaY * kWheelZoomStep;
     float newPps = pixelsPerSemitone * zoomFactor;
     if (zoomFactor < 1.0f)
     {
@@ -2836,7 +2866,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
     {
       float mouseY = e.y - headerHeight;
 
-      float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
+      float zoomFactor = 1.0f + wheel.deltaY * kWheelZoomStep;
       if (zoomFactor < 1.0f)
       {
         const float range = minPps * 0.35f;
@@ -2856,7 +2886,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
       float mouseX = e.x - pianoKeysWidth;
       double timeAtMouse = (mouseX + scrollX) / pixelsPerSecond;
 
-      float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
+      float zoomFactor = 1.0f + wheel.deltaY * kWheelZoomStep;
       float newPps = pixelsPerSecond * zoomFactor;
       newPps =
           juce::jlimit(minPpsX, MAX_PIXELS_PER_SECOND, newPps);
@@ -2904,7 +2934,7 @@ void PianoRollComponent::mouseWheelMove(const juce::MouseEvent &e,
   // Key-based zoom in grid area
   if (e.mods.isCommandDown() || e.mods.isCtrlDown())
   {
-    float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
+    float zoomFactor = 1.0f + wheel.deltaY * kWheelZoomStep;
 
     if (e.mods.isShiftDown())
     {
@@ -3009,6 +3039,11 @@ void PianoRollComponent::setProject(Project *proj)
   liveTimelineEndSeconds = 0.0;
   liveRecordingSampleRate = 0.0;
   project = proj;
+  if (proj != initialFitProject)
+  {
+    initialFitProject = proj;
+    initialFitDone = proj == nullptr;
+  }
   hoveredNote = nullptr;
   setPreviewPlaybackState(false, 0, 0);
   selectedScaleMode =

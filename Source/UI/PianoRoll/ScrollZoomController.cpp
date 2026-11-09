@@ -50,7 +50,7 @@ void ScrollZoomController::handleMouseWheel(const juce::MouseEvent& e, const juc
             // Vertical zoom
             float mouseY = e.y - headerHeight;
 
-            float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
+            float zoomFactor = 1.0f + wheel.deltaY * 0.6f;
             float newPps = coordMapper->getPixelsPerSemitone() * zoomFactor;
             const int visibleHeight = componentHeight - headerHeight - 14;
             const float minPpsForFill =
@@ -79,7 +79,7 @@ void ScrollZoomController::handleMouseWheel(const juce::MouseEvent& e, const juc
             float mouseX = e.x - pianoKeysWidth;
             double timeAtMouse = (mouseX + coordMapper->getScrollX()) / coordMapper->getPixelsPerSecond();
 
-            float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
+            float zoomFactor = 1.0f + wheel.deltaY * 0.6f;
             float newPps = coordMapper->getPixelsPerSecond() * zoomFactor;
             newPps = juce::jlimit(MIN_PIXELS_PER_SECOND, MAX_PIXELS_PER_SECOND, newPps);
             coordMapper->setPixelsPerSecond(newPps);
@@ -117,7 +117,7 @@ void ScrollZoomController::handleMouseWheel(const juce::MouseEvent& e, const juc
 
     // Key-based zoom: XY simultaneous (like other DAWs)
     if (e.mods.isCommandDown() || e.mods.isCtrlDown()) {
-        float zoomFactor = 1.0f + wheel.deltaY * 0.3f;
+        float zoomFactor = 1.0f + wheel.deltaY * 0.6f;
 
         // Calculate mouse position relative to content area
         float mouseX = static_cast<float>(e.x - pianoKeysWidth);
