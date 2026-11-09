@@ -576,6 +576,10 @@ IncrementalSynthesizer::computeSynthesisRange(int dirtyStart, int dirtyEnd) {
   if (totalFrames == 0)
     return {dirtyStart, dirtyEnd};
 
+  // Batch 3: a length % above 100 makes the dirty range reach past the
+  // analysis grid; remember by how much before clamping for the voiced
+  // expansion below (which can only walk the analysis mask).
+  const int requestedEnd = dirtyEnd;
   dirtyStart = std::max(0, dirtyStart);
   dirtyEnd = std::min(totalFrames, dirtyEnd);
 
@@ -626,6 +630,12 @@ IncrementalSynthesizer::computeSynthesisRange(int dirtyStart, int dirtyEnd) {
   }
   end = std::min(totalFrames, end + kPadFrames);
 
+  // The scaled tail past the grid is dirty by construction (every note
+  // in it was rescaled), so it joins the range without expansion.
+  if (requestedEnd > totalFrames)
+    end = std::max(end, std::min(requestedEnd,
+                                 project->getOutputFrameCount()));
+
   return {start, end};
 }
 
@@ -646,6 +656,31 @@ IncrementalSynthesizer::generateBlendMask(int startFrame, int endFrame,
   // orig/synth combing artifacts at note junctions.
   std::vector<float> frameMask(numFrames, 1.0f);
 
+  // Batch 3: frames past the analysis grid (a stretched tail) have no
+  // voicedMask entry; their voiced-ness is the covering note's - a
+  // note's tail is voiced where the note is. Without this, a tail
+  // longer than kKeepOriginalUnvoicedFrames read as one long unvoiced
+  // run and was committed as (zero-padded) original: silence.
+  std::vector<char> noteCovered;
+  if (endFrame > totalFrames && numFrames > 0) {
+    noteCovered.assign(static_cast<size_t>(numFrames), 0);
+    for (const auto &note : project->getNotes()) {
+      if (note.isRest())
+        continue;
+      const int coverStart = std::max(startFrame, note.getStartFrame());
+      const int coverEnd = std::min(endFrame, note.getEndFrame());
+      for (int gf = coverStart; gf < coverEnd; ++gf)
+        noteCovered[static_cast<size_t>(gf - startFrame)] = 1;
+    }
+  }
+  const auto isVoicedFrame = [&](int gf) {
+    if (gf >= 0 && gf < totalFrames)
+      return static_cast<bool>(voicedMask[gf]);
+    if (gf >= startFrame && gf < endFrame && !noteCovered.empty())
+      return noteCovered[static_cast<size_t>(gf - startFrame)] != 0;
+    return false;
+  };
+
   // Keep original audio only for long unvoiced runs (e.g. clear breaths/silence),
   // not for short UV gaps between notes.
   constexpr int kKeepOriginalUnvoicedFrames = 24;
@@ -653,8 +688,7 @@ IncrementalSynthesizer::generateBlendMask(int startFrame, int endFrame,
     int i = 0;
     while (i < numFrames) {
       const int gf = startFrame + i;
-      const bool voiced =
-          gf >= 0 && gf < totalFrames && static_cast<bool>(voicedMask[gf]);
+      const bool voiced = isVoicedFrame(gf);
       if (voiced) {
         ++i;
         continue;
@@ -663,8 +697,7 @@ IncrementalSynthesizer::generateBlendMask(int startFrame, int endFrame,
       const int runStart = i;
       while (i < numFrames) {
         const int g = startFrame + i;
-        const bool v =
-            g >= 0 && g < totalFrames && static_cast<bool>(voicedMask[g]);
+        const bool v = isVoicedFrame(g);
         if (v)
           break;
         ++i;
@@ -891,8 +924,10 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // clusters, then add voiced-segment context and padding.
   auto [startFrame, endFrame] = computeSynthesisRange(dirtyStart, dirtyEnd);
   startFrame = std::max(0, startFrame);
-  endFrame =
-      std::min(static_cast<int>(audioData.melSpectrogram.size()), endFrame);
+  // Batch 3: the render grid is the OUTPUT length, which a length %
+  // stretches past the analysis mel; clamping to the mel size was the
+  // other half of the "200% = silence" bug.
+  endFrame = std::min(project->getOutputFrameCount(), endFrame);
 
   if (startFrame >= endFrame) {
     if (onComplete)
@@ -1286,8 +1321,17 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // is computed from the scratch PSOLA render, not from this analysis mel.
   std::vector<std::vector<float>> melRange;
   if (!usePsola && !useBigVgan) {
-    melRange.assign(audioData.melSpectrogram.begin() + startFrame,
-                    audioData.melSpectrogram.begin() + endFrame);
+    // Frames past the analysis mel (a stretched tail) start from the
+    // last analysis frame; the timing pass and the gap bridging below
+    // overwrite everything a note covers or connects.
+    const int melFrames = static_cast<int>(audioData.melSpectrogram.size());
+    if (melFrames > 0) {
+      melRange.resize(static_cast<size_t>(endFrame - startFrame));
+      for (int frame = startFrame; frame < endFrame; ++frame)
+        melRange[static_cast<size_t>(frame - startFrame)] =
+            audioData.melSpectrogram[static_cast<size_t>(
+                std::min(frame, melFrames - 1))];
+    }
     applyNoteTimingToMel(*project, startFrame, endFrame, melRange);
 
     if (melRange.empty()) {
@@ -1434,6 +1478,18 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           int startSample = capturedStartFrame * hopSize;
           int expectedSamples =
               (capturedEndFrame - capturedStartFrame) * hopSize;
+
+          // Batch 3: a length % above 100 renders past the end of the
+          // analysis-length composite. Grow it (keeping the content,
+          // clearing the extension) so the stretched tail is written
+          // instead of being truncated by the min() below.
+          if (startSample + expectedSamples > totalSamples &&
+              audioData.waveform.getNumChannels() > 0) {
+            audioData.waveform.setSize(
+                audioData.waveform.getNumChannels(),
+                startSample + expectedSamples, true, true, false);
+            totalSamples = audioData.waveform.getNumSamples();
+          }
 
           if (expectedSamples <= 0) {
             isBusy = false;
@@ -1998,6 +2054,20 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 }
               }
             }
+          }
+
+          // Batch 3: keep the composite exactly the output length. A
+          // render that reaches the output end at a length % below 100
+          // would otherwise leave the pre-shrink tail in place.
+          {
+            const int outputFrames = capturedProject->getOutputFrameCount();
+            const int outputSamples = outputFrames * hopSize;
+            if (capturedEndFrame >= outputFrames &&
+                audioData.waveform.getNumSamples() > outputSamples &&
+                audioData.waveform.getNumChannels() > 0)
+              audioData.waveform.setSize(
+                  audioData.waveform.getNumChannels(), outputSamples, true,
+                  false, false);
           }
 
           // Persist only semantic render state. Previously this loop stored a

@@ -278,25 +278,48 @@ std::vector<float> Project::getAdjustedF0ForRange(int startFrame, int endFrame) 
     if (audioData.basePitch.empty() || audioData.deltaPitch.empty())
         return {};
 
-    // Clamp range
     startFrame = std::max(0, startFrame);
-    endFrame = std::min(endFrame, static_cast<int>(audioData.basePitch.size()));
 
     if (startFrame >= endFrame)
         return {};
 
+    // Batch 3: the range is NOT clamped to the dense grid any more. A
+    // length % above 100 stretches the output past the analysis frames,
+    // and clamping here silently dropped that tail (one half of the
+    // "200% = silence" bug). Frames past the grid are composed from the
+    // covering note below.
+    const int denseFrames = static_cast<int>(audioData.basePitch.size());
     const int rangeSize = endFrame - startFrame;
     std::vector<float> adjustedF0(static_cast<size_t>(rangeSize), 0.0f);
 
+    size_t noteCursor = 0; // notes are stored in frame order
     for (int i = 0; i < rangeSize; ++i)
     {
         const int globalIdx = startFrame + i;
-        const float base = audioData.basePitch[static_cast<size_t>(globalIdx)];
-        const float delta = (globalIdx < static_cast<int>(audioData.deltaPitch.size()))
-                                ? audioData.deltaPitch[static_cast<size_t>(globalIdx)]
-                                : 0.0f;
-        float midi = base + delta + globalPitchOffset;
-        adjustedF0[static_cast<size_t>(i)] = midiToFreq(midi);
+        if (globalIdx < denseFrames)
+        {
+            const float base = audioData.basePitch[static_cast<size_t>(globalIdx)];
+            const float delta = (globalIdx < static_cast<int>(audioData.deltaPitch.size()))
+                                    ? audioData.deltaPitch[static_cast<size_t>(globalIdx)]
+                                    : 0.0f;
+            float midi = base + delta + globalPitchOffset;
+            adjustedF0[static_cast<size_t>(i)] = midiToFreq(midi);
+            continue;
+        }
+
+        // Past the dense grid the curve has no data by definition; the
+        // covering note's adjusted pitch, flat, is the honest
+        // approximation (the source audio for these frames still comes
+        // from the note's own tail via the timing map).
+        while (noteCursor < notes.size() &&
+               (notes[noteCursor].isRest() ||
+                notes[noteCursor].getEndFrame() <= globalIdx))
+            ++noteCursor;
+        if (noteCursor < notes.size() &&
+            notes[noteCursor].getStartFrame() <= globalIdx)
+            adjustedF0[static_cast<size_t>(i)] =
+                midiToFreq(notes[noteCursor].getAdjustedMidiNote() +
+                           globalPitchOffset);
     }
 
     return adjustedF0;
@@ -422,6 +445,41 @@ void Project::setDragSnapMode(DragSnapMode mode)
     modified = true;
 }
 
+int Project::getLengthAnchorFrame() const
+{
+    int anchor = 0;
+    bool found = false;
+    for (const auto &note : notes)
+    {
+        if (!found || note.getStartFrame() < anchor)
+        {
+            anchor = note.getStartFrame();
+            found = true;
+        }
+    }
+    return anchor;
+}
+
+int Project::getOutputFrameCount() const
+{
+    const int analysisFrames = audioData.getNumFrames();
+    int result = analysisFrames;
+
+    const double k = static_cast<double>(macroParameters->lengthPercent) / 100.0;
+    if (std::abs(k - 1.0) > 1.0e-9 && analysisFrames > 0)
+    {
+        const int anchor = getLengthAnchorFrame();
+        result = anchor + static_cast<int>(
+                              std::lround((analysisFrames - anchor) * k));
+    }
+
+    // A note can reach past the scaled analysis end (the max(start + 1)
+    // guard in scaleNotesForLengthPercent); the output must cover it.
+    for (const auto &note : notes)
+        result = std::max(result, note.getEndFrame());
+    return std::max(1, result);
+}
+
 void Project::ensureLengthBase()
 {
     if (lengthBaseValid && lengthBaseFrames.size() == notes.size())
@@ -431,7 +489,12 @@ void Project::ensureLengthBase()
     // not 100 the frames on the notes are already scaled, so divide the
     // scale back out (this is where a sub-frame of drift can enter after
     // timing edits made at a non-100 percent; see MODIFICATIONS.md).
+    // Batch 3: the divide-back is anchored like the scale itself - the
+    // anchor frame is the same at any percent, so it divides out
+    // exactly. (Projects saved by the pre-anchor build divide back with
+    // a small one-time error bounded by the first segment's offset.)
     const double k = static_cast<double>(macroParameters->lengthPercent) / 100.0;
+    const int anchor = getLengthAnchorFrame();
     lengthBaseFrames.clear();
     lengthBaseFrames.reserve(notes.size());
     for (const auto &note : notes)
@@ -440,8 +503,8 @@ void Project::ensureLengthBase()
         int end = note.getEndFrame();
         if (std::abs(k - 1.0) > 1.0e-9)
         {
-            start = static_cast<int>(std::lround(start / k));
-            end = static_cast<int>(std::lround(end / k));
+            start = anchor + static_cast<int>(std::lround((start - anchor) / k));
+            end = anchor + static_cast<int>(std::lround((end - anchor) / k));
         }
         lengthBaseFrames.emplace_back(start, end);
     }
@@ -454,16 +517,26 @@ void Project::scaleNotesForLengthPercent(float percent)
     ensureLengthBase();
 
     const double k = static_cast<double>(clamped) / 100.0;
+    // Batch 3: scale around the anchor (the earliest base start), so the
+    // first segment's start never moves and only the tail stretches.
+    int anchor = 0;
+    if (!lengthBaseFrames.empty())
+    {
+        anchor = lengthBaseFrames.front().first;
+        for (const auto &base : lengthBaseFrames)
+            anchor = std::min(anchor, base.first);
+    }
     int dirtyStart = std::numeric_limits<int>::max();
     int dirtyEnd = std::numeric_limits<int>::min();
     for (size_t i = 0; i < notes.size(); ++i)
     {
         auto &note = notes[i];
-        const int start =
-            static_cast<int>(std::lround(lengthBaseFrames[i].first * k));
+        const int start = anchor + static_cast<int>(std::lround(
+                                       (lengthBaseFrames[i].first - anchor) * k));
         const int end = std::max(
             start + 1,
-            static_cast<int>(std::lround(lengthBaseFrames[i].second * k)));
+            anchor + static_cast<int>(std::lround(
+                         (lengthBaseFrames[i].second - anchor) * k)));
         if (note.getStartFrame() != start || note.getEndFrame() != end)
         {
             dirtyStart = std::min({dirtyStart, note.getStartFrame(), start});
@@ -481,7 +554,10 @@ void Project::scaleNotesForLengthPercent(float percent)
     PitchCurveProcessor::rebuildBaseFromNotes(*this);
     if (dirtyStart <= dirtyEnd)
     {
-        const int frameCount = getAudioData().getNumFrames();
+        // Batch 3: clamp against the OUTPUT frame count, not the
+        // analysis count - at 200% the second half of the layout was
+        // never marked dirty and so never rendered.
+        const int frameCount = getOutputFrameCount();
         setF0DirtyRange(std::max(0, dirtyStart - 24),
                         std::min(frameCount, dirtyEnd + 24));
     }

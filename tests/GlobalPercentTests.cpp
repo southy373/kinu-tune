@@ -180,6 +180,101 @@ int main()
         CHECK(project.getNotes()[1].getEndFrame() == 200);
     }
 
+    // Batch 3: length % is anchored at the first segment's start, so a
+    // project whose audio does not begin at frame 0 keeps its first
+    // segment in place and only the tail stretches.
+    {
+        Project project;
+        auto &audio = project.getAudioData();
+        audio.sampleRate = 44100;
+        audio.melSpectrogram.assign(600, std::vector<float>(1, 0.0f));
+        audio.f0.assign(600, 261.6f);
+        audio.basePitch.assign(600, 60.0f);
+        audio.deltaPitch.assign(600, 0.0f);
+        audio.voicedMask.assign(600, true);
+        const int spans[2][2] = {{100, 200}, {250, 300}};
+        for (int i = 0; i < 2; ++i)
+        {
+            Note note(spans[i][0], spans[i][1], 60.0f + 2.0f * i);
+            note.setSrcStartFrame(spans[i][0]);
+            note.setSrcEndFrame(spans[i][1]);
+            note.setOriginalMidiNote(60.0f + 2.0f * i);
+            note.setDeltaPitch(std::vector<float>(
+                static_cast<size_t>(spans[i][1] - spans[i][0]), 0.0f));
+            note.setOriginalDeltaPitch(note.getDeltaPitch());
+            project.addNote(note);
+        }
+
+        project.scaleNotesForLengthPercent(200.0f);
+        CHECK(project.getNotes()[0].getStartFrame() == 100); // anchor
+        CHECK(project.getNotes()[0].getEndFrame() == 300);
+        CHECK(project.getNotes()[1].getStartFrame() == 400);
+        CHECK(project.getNotes()[1].getEndFrame() == 500);
+        // The output grid scales around the same anchor.
+        CHECK(project.getOutputFrameCount() == 1100);
+
+        project.scaleNotesForLengthPercent(100.0f);
+        CHECK(project.getNotes()[0].getStartFrame() == 100);
+        CHECK(project.getNotes()[1].getStartFrame() == 250);
+        CHECK(project.getOutputFrameCount() == 600);
+
+        project.scaleNotesForLengthPercent(50.0f);
+        CHECK(project.getNotes()[0].getStartFrame() == 100);
+        CHECK(project.getNotes()[0].getEndFrame() == 150);
+        CHECK(project.getNotes()[1].getStartFrame() == 175);
+        CHECK(project.getOutputFrameCount() == 350);
+    }
+
+    // Batch 3: the output frame count tracks the length % (the render
+    // grid the synthesizer sizes to).
+    {
+        Project project;
+        fillProject(project);
+        CHECK(project.getOutputFrameCount() == 600);
+        project.scaleNotesForLengthPercent(150.0f);
+        CHECK(project.getOutputFrameCount() == 900);
+        project.scaleNotesForLengthPercent(200.0f);
+        CHECK(project.getOutputFrameCount() == 1200);
+        project.scaleNotesForLengthPercent(50.0f);
+        CHECK(project.getOutputFrameCount() == 300);
+    }
+
+    // Batch 3: adjusted F0 past the analysis grid is composed from the
+    // covering note instead of being clamped away (the 200% tail used
+    // to come back empty/silent).
+    {
+        Project project;
+        auto &audio = project.getAudioData();
+        audio.sampleRate = 44100;
+        audio.melSpectrogram.assign(600, std::vector<float>(1, 0.0f));
+        audio.f0.assign(600, 261.6f);
+        audio.basePitch.assign(600, 60.0f);
+        audio.deltaPitch.assign(600, 0.0f);
+        audio.voicedMask.assign(600, true);
+        const int spans[3][2] = {{0, 100}, {100, 200}, {250, 600}};
+        const float midis[3] = {60.3f, 61.8f, 64.0f};
+        for (int i = 0; i < 3; ++i)
+        {
+            Note note(spans[i][0], spans[i][1], midis[i]);
+            note.setSrcStartFrame(spans[i][0]);
+            note.setSrcEndFrame(spans[i][1]);
+            note.setOriginalMidiNote(midis[i]);
+            note.setDeltaPitch(std::vector<float>(
+                static_cast<size_t>(spans[i][1] - spans[i][0]), 0.0f));
+            note.setOriginalDeltaPitch(note.getDeltaPitch());
+            project.addNote(note);
+        }
+
+        project.scaleNotesForLengthPercent(200.0f);
+        const auto f0 = project.getAdjustedF0ForRange(590, 700);
+        CHECK(f0.size() == 110);
+        // Inside the dense grid the curve is the analysis curve...
+        CHECK(f0[0] > 0.0f);
+        // ...and past it the covering note (midi 64) keeps sounding.
+        CHECK(nearF(f0[50], 329.63f, 1.0f));
+        CHECK(nearF(f0[109], 329.63f, 1.0f));
+    }
+
     std::cout << "Global percent tests passed\n";
     return 0;
 }

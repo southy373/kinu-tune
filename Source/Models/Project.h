@@ -259,6 +259,13 @@ public:
     // timing edit over the whole project.
     void scaleNotesForLengthPercent(float percent);
 
+    // The length of the rendered output in frames. At 100% this is the
+    // analysis frame count; otherwise the analysis span scaled by the
+    // length % around the anchor (see getLengthAnchorFrame), extended
+    // to cover every note's output end. Synthesis renders into a
+    // buffer of this size, so a stretched tail is not truncated.
+    int getOutputFrameCount() const;
+
     // Timing edits made outside the length-% path (timing drags, boundary
     // drags, undo/redo of them) invalidate the length base table; the next
     // scale re-derives it from the current frames at the current percent.
@@ -401,6 +408,11 @@ private:
     std::vector<std::pair<int, int>> lengthBaseFrames;
     bool lengthBaseValid = false;
     void ensureLengthBase();
+    // Batch 3: length % is anchored - the earliest note start never
+    // moves when the length changes; only the tail stretches/shrinks.
+    // (Before batch 3 the scale ran from frame 0, so the whole layout
+    // drifted by the first segment's offset.)
+    int getLengthAnchorFrame() const;
 
     // F0 direct edit dirty range
     int f0DirtyStart = -1;
