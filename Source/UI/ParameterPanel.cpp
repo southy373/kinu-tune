@@ -396,7 +396,10 @@ ParameterPanel::ParameterPanel()
     dragSnapModeButton.setEnabled(snapToSemitones);
     timelineSnapCycleToggle.setToggleState(timelineSnapCycle, juce::dontSendNotification);
 
-    const std::array<juce::Component*, 11> pitchComponents {{
+    // The count must match the entries: the loop below dereferences
+    // every slot (the batch-3 fader removal initially left this at 11
+    // with four null slots and crashed the panel's constructor).
+    const std::array<juce::Component*, 7> pitchComponents {{
         &pitchSectionLabel, &chromaticToggle, &scaleToggle,
         &referenceLabel, &referenceSlider,
         &snapToSemitonesToggle, &dragSnapModeButton
