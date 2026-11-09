@@ -6,6 +6,7 @@
 #include "../Audio/RealtimePitchProcessor.h"
 #include "../Audio/IO/MidiExporter.h"
 #include "../Models/ProjectSerializer.h"
+#include "../Undo/LengthPercentAction.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/Constants.h"
 #include "../Utils/UI/Theme.h"
@@ -1089,6 +1090,56 @@ MainComponent::MainComponent(bool enableAudioDevice)
   {
     pianoRoll.setPitchReferenceHz(hz);
     notifyProjectDataChanged();
+  };
+  // Batch 2 (U7): global pitch % / formant commits. The panel has
+  // already written the value to the project; these parameters affect
+  // the complete render and dirty no particular note, so request a
+  // full-range pass exactly like triggerResynthesis() does for DAW
+  // parameter automation.
+  const auto globalRenderCommitted = [this]()
+  {
+    if (auto *project = getProject())
+    {
+      const int totalFrames =
+          static_cast<int>(project->getAudioData().melSpectrogram.size());
+      if (totalFrames > 0)
+        project->setF0DirtyRange(0, totalFrames);
+    }
+    resynthesizeIncremental();
+    notifyProjectDataChanged();
+    if (isPluginMode() && onPitchEditFinished)
+      onPitchEditFinished();
+  };
+  parameterPanel.onGlobalPitchPercentChanged =
+      [globalRenderCommitted](double) { globalRenderCommitted(); };
+  parameterPanel.onGlobalFormantChanged =
+      [globalRenderCommitted](double) { globalRenderCommitted(); };
+  parameterPanel.onGlobalLengthPercentChanged = [this](double percent)
+  {
+    auto *project = getProject();
+    if (!project)
+      return;
+    const float oldPercent = project->getLengthPercent();
+    const float newPercent = static_cast<float>(percent);
+    if (std::abs(oldPercent - newPercent) < 0.001f)
+      return;
+
+    std::vector<NoteTimingState> before;
+    std::vector<NoteTimingState> after;
+    for (auto &note : project->getNotes())
+      before.push_back(NoteTimingState::capture(note));
+    project->scaleNotesForLengthPercent(newPercent);
+    for (auto &note : project->getNotes())
+      after.push_back(NoteTimingState::capture(note));
+    if (undoManager)
+      undoManager->addAction(std::make_unique<LengthPercentAction>(
+          *project, std::move(before), std::move(after), oldPercent,
+          newPercent));
+
+    resynthesizeIncremental();
+    notifyProjectDataChanged();
+    if (isPluginMode() && onPitchEditFinished)
+      onPitchEditFinished();
   };
   parameterPanel.onTimelineDisplayModeChanged =
       [this](TimelineDisplayMode mode)
@@ -3007,6 +3058,10 @@ void MainComponent::afterHistoryChange(bool requiresResynthesis)
   // control pointers into it must not survive.
   pianoRoll.dropTransientNotePointers();
   parameterPanel.updateFromNote();
+  // History changes can move project-backed settings (a length-% undo
+  // restores the percent and every note frame); re-sync the panel's
+  // project-backed controls so their values cannot go stale.
+  parameterPanel.updateGlobalSliders();
   pianoRoll.invalidateBasePitchCache(); // Refresh cache after note split etc.
   pianoRoll.repaint();
   pianoRollView.refreshOverview();

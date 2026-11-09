@@ -94,6 +94,14 @@ public:
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
     std::function<void(int)> onRenderDeviceChanged;
     std::function<void(bool)> onChangesBypassChanged;
+    // Batch 2 (U7): the project-wide faders. Pitch % and formant are
+    // render settings: the panel writes them to the project and these
+    // fire on commit (drag end, text entry, Alt+click reset) so the
+    // owner can re-render. Length % moves every note, so the panel only
+    // reports it; the owner performs it as an undoable action.
+    std::function<void(double)> onGlobalPitchPercentChanged;
+    std::function<void(double)> onGlobalFormantChanged;
+    std::function<void(double)> onGlobalLengthPercentChanged;
 
 private:
     void setupTextButton(juce::TextButton& button);
@@ -109,6 +117,9 @@ private:
     void setSnapToSemitonesInternal(bool enabled, bool notify);
     void setDragSnapModeInternal(DragSnapMode mode, bool notify);
     void setPitchReferenceInternal(int hz, bool notify);
+    void setGlobalPitchPercentInternal(double percent, bool notify);
+    void setGlobalFormantInternal(double semitones, bool notify);
+    void setGlobalLengthPercentInternal(double percent, bool notify);
     void refreshModeToggles();
     void refreshSynthesisToggles();
     void setChangesBypassedInternal(bool bypassed, bool notify);
@@ -167,6 +178,15 @@ private:
     juce::Label referenceLabel;
     SliderBox referenceSlider { "Pitch Reference" };
 
+    // Batch 2 (U7): project-wide faders. Pitch % and formant live in the
+    // Pitch card under the drag-snap row; length % lives in the Time card.
+    juce::Label globalPitchLabel;
+    GlobalFaderSlider globalPitchSlider { "Global Pitch %" };
+    juce::Label globalFormantLabel;
+    GlobalFaderSlider globalFormantSlider { "Global Formant" };
+    juce::Label globalLengthLabel;
+    GlobalFaderSlider globalLengthSlider { "Global Length %" };
+
     StyledToggleButton snapToSemitonesToggle;
     CompactSelectionButton dragSnapModeButton;
 
@@ -180,6 +200,13 @@ private:
     CompactSelectionButton timelineGridButton { "1/4" };
     StyledToggleButton timelineSnapCycleToggle;
     MacroSlider brightnessSlider;
+
+    double globalPitchPercent = 100.0;
+    double globalFormantShift = 0.0;
+    double globalLengthPercent = 100.0;
+    bool globalPitchDragging = false;
+    bool globalFormantDragging = false;
+    bool globalLengthDragging = false;
 
     int selectedScaleRootNote = 0;
     ScaleMode selectedScaleMode = ScaleMode::Major;
