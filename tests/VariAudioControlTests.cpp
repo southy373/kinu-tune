@@ -64,12 +64,17 @@ int main()
 
         PitchToolHandles handles;
         handles.updateHandles({&note}, mapper);
-        // Default set without neighbours: straighten and correct pitch. No
-        // split line: a click on the segment only selects it.
-        CHECK(handles.getHandles().size() == 2);
+        // Default set without neighbours: straighten, correct pitch and
+        // (batch 2, B8) split on the bottom-centre edge. The split
+        // control sits on the edge, not the body, so a click on the
+        // segment body still only selects it.
+        CHECK(handles.getHandles().size() == 3);
         const auto* straighten = findHandle(handles, Type::Vibrato);
         const auto* correct = findHandle(handles, Type::CorrectPitch);
-        CHECK(straighten && correct);
+        const auto* split = findHandle(handles, Type::Split);
+        CHECK(straighten && correct && split);
+        CHECK(near(split->bounds.getCentreX(), (left + right) * 0.5f));
+        CHECK(split->bounds.getBottom() <= bottom);
         CHECK(near(straighten->bounds.getCentreX(), (left + right) * 0.5f));
         CHECK(straighten->bounds.getBottom() <= top);
         CHECK(near(correct->bounds.getCentreX(), (left + right) * 0.5f));
