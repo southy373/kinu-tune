@@ -238,6 +238,134 @@ the original recording, never from the previously rendered audio:
   them. `tests/ChangesBypassTests.cpp` and the inspector tests pin the
   bypass and delete behaviour above.
 
+### Batch 2: remaining VariAudio operations, freehand drawing, global percent controls, insert prototype (2026-11-09)
+
+Operations (gap-list U1/U4, B2/B4-B8/B12):
+
+- U1: middle-drag pans the view (it scrubbed the playhead before);
+  scrubbing moved to Shift+Ctrl+drag, extending the batch-1
+  Shift+Ctrl+click seek. U4: a plain drag starting on empty canvas is
+  box selection, Nuendo-style (it panned the view before); panning
+  remains on middle-drag and the scrollbars.
+- B2: Alt+drag rectangle zooms in on the rectangle; Alt+click (a press
+  that moves less than 6 px) zooms out; Alt+double-click fit-to-view
+  already existed. Alt on a pitch-tool handle still reaches the tilt
+  tool, which is checked first.
+- B8: a Split smart control at the segment's bottom-centre edge. This
+  supersedes the 2026-10-19 layout note that the default handle set
+  has no split control.
+- B12: Absolute snap lands on semitones only (drag and arrow-key
+  nudge); scale-note snapping survives only in Relative mode.
+- B5/B6: tilt gains a movable anchor (`Note::tiltAnchor`, default the
+  centre, serialised only when moved), shown as a diamond on the top
+  edge; Alt+tilt rotates the tilt line about the anchor instead of
+  tilting around the centre.
+- B7: straighten gains a range (`Note::straightenRangeStart/End`,
+  serialised): vibrato scaling applies fully inside the range and
+  feathers out over up to 5% of the note on either side
+  (`PitchToolOperations::scaleVibratoInRange`).
+- B4: Alt+press within 6 px of a segment edge drags that boundary:
+  the output and source edges move together, a touching neighbour
+  follows, and gaps (frames owned by no note - the speech build makes
+  no rest notes) and other segments clamp the drag on both timelines.
+  Committed as `SegmentBoundaryAction` (undoable). Trade-off: an Alt
+  press exactly on an edge no longer starts an Alt split drag.
+- Ctrl fine adjust: holding Ctrl during a segment pitch drag disables
+  snapping for as long as it is held (resolved per mouse event, like
+  the existing Shift = Off). On Windows Ctrl arrives as the command
+  modifier, which previously selected Absolute during drags; Ctrl+click
+  (selection toggle) and Shift+Ctrl+click / Shift+Ctrl+wheel are
+  unaffected because a Ctrl+click never starts a pitch drag.
+- U6: pitch drawing is freehand now. The drag stroke itself is the
+  curve: it writes the preview curve directly for frames owned by the
+  note under the pointer (frames owned by no note are skipped, so a
+  gap breaks a stroke; unvoiced frames inside a note are written).
+  On release the stroke is smoothed (5-point moving average, ends
+  feathered) and the pre-existing confirmation panel, baked-delta
+  machinery and `PitchDrawingAction` undo apply unchanged.
+  Right-click / double-click erases the drawn curve over +/-10 frames
+  back to the original.
+
+Global percent controls (U7):
+
+- Pitch % (50-200) and length % (50-200), default 100, live in
+  `MacroParameters` and are serialised with the project (JSON and the
+  binary archive). Pitch % scales the synthesis F0 after all per-note
+  edits (preserved-timing spans are restored from the source F0
+  afterwards and stay unscaled); 100 restores the render exactly.
+- Length % scales every note's output timing against a runtime base
+  table (never serialised): the base is the current timing whenever
+  100 is in effect, and timing/boundary edits re-derive it, so manual
+  edits and the percent compose. Tail semantics: the composite buffer
+  length stays at the analysis frame count - above 100% stretches the
+  notes within it (content past the end is truncated), below 100%
+  compresses them and the vacated tail follows the existing
+  warp/vacated-region behaviour. Returning to 100 restores the
+  original timings, except that manual timing edits made while a
+  percent was in effect can leave a rounding drift of at most one
+  frame.
+- The ARA parameter panel has three global faders: Global Pitch %,
+  Global Formant and Global Length %. Global Formant is the
+  pre-existing `Project::formantShift` setting made panel-editable
+  (the host's formantShift parameter writes the same value; a host
+  change is reflected in the panel on the next project bind). Pitch %
+  and formant commits mark the full F0 range dirty and re-render like
+  a DAW automation change; length % commits are one
+  `LengthPercentAction` undo step. These faders exist in ARA mode
+  only: the non-ARA mode is the insert prototype below, which has no
+  length control (a plug-in cannot declare a scaled output length to
+  the host - DOP offers only a user-specified tail).
+- Every fader added in this batch (panel and insert) is a
+  `GlobalFaderSlider`: double-click opens direct numeric entry, and
+  Alt+click resets to neutral (100% for the percents, 0 for formant).
+
+Insert prototype (non-ARA mode; spec change replaced the earlier
+"percent-only simple view" plan):
+
+- Non-ARA is a realtime streaming insert effect now, self-contained in
+  `Source/Audio/StreamingPitchShifter` so it can be dropped as a unit:
+  TD-PSOLA stretch-then-resample pitch shift by percent, with
+  similarity-aligned grains (each grain's analysis centre is
+  cross-correlated against the intermediate tail - textbook spacing
+  alone tears the waveform at 1.5x, verified numerically), NSDF pitch
+  estimation (1024-sample window, 256 hop, 55-420 Hz) and formant
+  correction by PSOLA grain length. No AI.
+- Latency is fixed at 2048 samples (46.4 ms at 44.1 kHz, 42.7 ms at
+  48 kHz), reported via `setLatencySamples` whenever no ARA document
+  is bound (ARA reports 0) and measured exactly by
+  `StreamingPitchShifterTests` (impulse-response centroid = 2048;
+  220 Hz measures 330.0 Hz at 150% and 110.0 Hz at 50%). All buffers
+  are allocated in `prepare()`; `process()` allocates nothing. At
+  pitch 100% and neutral formant the output is the input bit-exact
+  (the pipeline keeps running internally so engaging a shift is
+  seamless, but the dry signal is what leaves). Note the host still
+  compensates the reported latency in that state, so a neutral insert
+  can sit 2048 samples early in hosts that apply compensation to a
+  plug-in whose wet path is bypassed internally.
+- Routing: `processBlock` sends the block to the insert effect
+  whenever no ARA document is bound (`araDocumentController` is the
+  audio-thread-safe signal), before the playhead tail, so no
+  transport is needed. The editor then shows exactly two faders -
+  the APVTS parameters `insertPitchPercent` (50-200) and
+  `insertFormant` (-12..+12 st) - and no capture UI. The legacy
+  capture classes and their tests stay compiled and untouched; the
+  capture path still serves ARA instances whose renderer lets a block
+  fall through.
+- Limitations: the resampler is linear interpolation (some aliasing
+  at large ratios), the formant shift is the grain-length
+  approximation rather than a spectral-envelope shift, dry/wet is not
+  applied in insert mode (the output stage is gain only), and more
+  than two channels are not processed (the shifter is prepared for at
+  most two).
+
+CI:
+
+- `.github/workflows/ci.yml` roles swapped: `windows-build` is the
+  release gate - it builds the VST3, builds the full unit-test suite
+  and runs every test with ctest, and keeps the check-vst3.ps1 host
+  check. `macos-tests` is compile-only (tests not configured, ctest
+  not run) while still proving the product builds for macOS.
+
 ### Defaults
 - Pitch Snap Mode Absolute, smart controls "Default", scale shown in the piano
   roll, for new projects. Saved projects keep their saved settings.
@@ -272,9 +400,10 @@ the original recording, never from the previously rendered audio:
 - tests/SourceGuard.cmake: fails when code outside the allowed files writes a
   note's pitch directly, calls the engine's audition loop directly, or creates
   a plug-in EditorController outside Source/Plugin/RenderControllers.h.
-- `.github/workflows/ci.yml` runs the unit tests on macOS and builds the Windows
-  VST3 on every push; `PITCHNET_REQUIRE_MODELS=OFF` lets it configure without
-  the macOS Core ML vocoder.
+- `.github/workflows/ci.yml` builds the Windows VST3 and runs the full unit
+  tests there on every push (Windows is the release gate since batch 2); the
+  macOS job is a compile-only check. `PITCHNET_REQUIRE_MODELS=OFF` lets it
+  configure without the macOS Core ML vocoder.
 - dev-rules.md lists the design rules to keep when changing the code.
 - cmake/StripBuildRpaths.cmake removes absolute rpaths (the build machine's
   ONNX Runtime folder) from the macOS bundles after linking and fails the build
@@ -282,8 +411,13 @@ the original recording, never from the previously rendered audio:
 - tests/ModelInferenceTests.cpp loads the shipped models and checks analysis
   and synthesis with numbers (FCPE reports a tone's pitch, GAME finds the note,
   the vocoder and PSOLA shift it by a minor third, and AI Resynthesis can be
-  chosen on macOS and Windows). It is the one test the CI Windows job also runs, so
-  Windows is known to analyse and synthesise.
+  chosen on macOS and Windows). Since batch 2 the CI Windows job runs it
+  together with the whole unit-test suite.
+- Batch 2 tests: GlobalPercentTests (percent model, serializer
+  round-trip, length scaling, undo) and StreamingPitchShifterTests
+  (bit-exact bypass, measured pitch ratios, measured latency);
+  VariAudioInspectorTests and PitchToolOperationsTests grew blocks for
+  the batch-2 operations and freehand drawing.
 - cmake/DependencyHashes.cmake records the SHA-256 of every archive CMake
   downloads (ONNX Runtime, the DirectML NuGet packages, the GAME models); a
   download that does not match stops the configure step. The GitHub Actions
@@ -317,6 +451,13 @@ New files:
   `tests/VariAudioInspectorTests.cpp`, `tests/AuditionOutputTests.cpp`,
   `tests/AuditionHandoffTests.cpp`, `tests/SourceGuard.cmake`,
   `tests/OnnxRuntimeAvailabilityTests.cpp`
+- Batch 2: `Source/Audio/StreamingPitchShifter.h/.cpp`,
+  `Source/Plugin/InsertEffectView.h`,
+  `Source/Undo/LengthPercentAction.h`,
+  `Source/Undo/SegmentBoundaryAction.h`,
+  `tests/GlobalPercentTests.cpp`, `tests/StreamingPitchShifterTests.cpp`,
+  `tests/PitchToolOperationsTests.cpp` (and `GlobalFaderSlider` added
+  to the existing `Source/UI/Sliders.h`)
 
 Removed files:
 
