@@ -33,7 +33,7 @@ const OrtApiBase *getApiBase()
   if (dladdr(reinterpret_cast<const void *>(&getApiBase), &imageInfo) == 0 ||
       imageInfo.dli_fname == nullptr)
   {
-    initialisationError = "Could not locate the Pure Tune plug-in bundle";
+    initialisationError = "Could not locate the FlexaTune plug-in bundle";
     return nullptr;
   }
 
@@ -47,7 +47,7 @@ const OrtApiBase *getApiBase()
                          RTLD_NOW | RTLD_LOCAL);
   if (runtime == nullptr)
   {
-    initialisationError = "Could not load Pure Tune's ONNX Runtime: " +
+    initialisationError = "Could not load FlexaTune's ONNX Runtime: " +
                           juce::String(dlerror());
     return nullptr;
   }
@@ -57,7 +57,7 @@ const OrtApiBase *getApiBase()
       dlsym(runtime, "OrtGetApiBase"));
   if (getApiBase == nullptr)
   {
-    initialisationError = "Pure Tune's ONNX Runtime has no OrtGetApiBase symbol";
+    initialisationError = "FlexaTune's ONNX Runtime has no OrtGetApiBase symbol";
     return nullptr;
   }
 
@@ -70,7 +70,7 @@ const OrtApiBase *getApiBase()
 {
   if (OnnxRuntimeLoader::ensureLoadedFromLocalDirectory() == nullptr)
   {
-    initialisationError = "Could not load Pure Tune's ONNX Runtime: " +
+    initialisationError = "Could not load FlexaTune's ONNX Runtime: " +
                           juce::String(OnnxRuntimeLoader::getLoadFailure());
     return nullptr;
   }
@@ -80,7 +80,7 @@ const OrtApiBase *getApiBase()
       OnnxRuntimeLoader::findExport("OrtGetApiBase"));
   if (getApiBase == nullptr)
   {
-    initialisationError = "Pure Tune's ONNX Runtime has no OrtGetApiBase symbol";
+    initialisationError = "FlexaTune's ONNX Runtime has no OrtGetApiBase symbol";
     return nullptr;
   }
 
@@ -100,12 +100,12 @@ bool initialise(juce::String *errorMessage)
     if (api == nullptr)
     {
       if (initialisationError.isEmpty())
-        initialisationError = "Pure Tune's ONNX Runtime does not support API version " +
+        initialisationError = "FlexaTune's ONNX Runtime does not support API version " +
                               juce::String(ORT_API_VERSION);
 
       // The release build writes no log file; on Windows this still reaches
       // the debugger output, which CI reads (tools/windows/vst3-instantiate).
-      const auto line = "Pure Tune: ONNX Runtime is unavailable, analysis is off: " +
+      const auto line = "FlexaTune: ONNX Runtime is unavailable, analysis is off: " +
                         initialisationError;
       juce::Logger::writeToLog(line);
       LOG(line);

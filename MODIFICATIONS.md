@@ -15,21 +15,30 @@ The full history of the changes is in the git log of this repository.
 
 ## Summary of changes
 
-### Batch 3 (Pure Tune)
+### Batch 3 (FlexaTune)
 
 Trial feedback on the batch-2 build, implemented as one batch.
 
-- **Rebrand and folder separation.** The product is Pure Tune
+- **Rebrand and folder separation.** The product was renamed twice
+  within this batch: first from Kinu Tune to Pure Tune, then - by the
+  user's decision on 2026-11-10, before any build was publicly
+  shipped under either new name - to **FlexaTune**, which is the
+  shipping name. Earlier references to Pure Tune in this section
+  describe the same work. The product is FlexaTune
   everywhere user-visible: the toolbar logo, splash and application
   strings, all six localisations, error messages. `PlatformPaths`'
-  product folder is "Pure Tune", so settings and logs live in
-  `%APPDATA%\Pure Tune` (macOS `~/Library/Pure Tune/` etc.) and
-  release builds load models from `%PROGRAMDATA%\Keinoaza\Pure
-  Tune\models` - fully separate from the shared Kinu Tune folders,
-  which are left untouched. The Windows installer script is renamed
-  `packaging/windows/PureTune.iss`, installs the models into the new
+  product folder is "FlexaTune", so settings and logs live in
+  `%APPDATA%\FlexaTune` (macOS `~/Library/FlexaTune/` etc.) and
+  release builds load models from `%PROGRAMDATA%\Keinoaza\FlexaTune\models`
+  - fully separate from both the shared Kinu Tune folders and the
+  short-lived Pure Tune folders, which are left untouched (no
+  migration: the plugin had never been used in a real project, so
+  the internal identity changed with the name - bundle id
+  `com.keinoaza.flexatune`, plugin code `FlxT`, and a new installer
+  AppId). The Windows installer script is renamed
+  `packaging/windows/FlexaTune.iss`, installs the models into the new
   folder, and at uninstall time offers (default: No) to also delete
-  Pure Tune's own models and settings folders; the old
+  FlexaTune's own models and settings folders; the old
   `packaging/windows/PitchNet.iss`, which only held the upstream
   update-check URL, is deleted. Internal identifiers are deliberately
   NOT renamed (the `VariAudioInspector` class and file names, test
@@ -537,7 +546,7 @@ Post-review fixes (independent review of this batch):
   (`Kinu Tune.component`) besides the VST3.
 - Installers: the upstream PitchNet.pkgproj and PitchNet.iss are not used.
   `packaging/macos/build-pkg.sh` builds a macOS package that installs into the
-  user's home; `packaging/windows/PureTune.iss` is the Windows installer, built
+  user's home; `packaging/windows/FlexaTune.iss` is the Windows installer, built
   and checked by `.github/workflows/windows-installer.yml`. Both are made from
   the files of the release zips.
 
@@ -590,7 +599,7 @@ New files:
 - `.github/workflows/windows-release.yml`, `.github/workflows/ci.yml`,
   `packaging/INSTALL-macOS.txt`, `packaging/INSTALL-Windows.txt`, `dev-rules.md`
 - `.github/workflows/windows-installer.yml`, `packaging/macos/build-pkg.sh`,
-  `packaging/macos/installer/*`, `packaging/windows/PureTune.iss`,
+  `packaging/macos/installer/*`, `packaging/windows/FlexaTune.iss`,
   `tools/windows/check-installer.ps1`
 - `Source/UI/HarmonyPanel.h`, `Source/UI/HarmonyPanel.cpp`
 - `Source/UI/VariAudioInspector.h`, `Source/UI/VariAudioInspector.cpp`

@@ -264,11 +264,11 @@ set(PITCHNET_MANUFACTURER_CODE Kein)
 set(PITCHNET_COPYRIGHT
     "Copyright 2026 Session Loops, HachiTune contributors and Keinoaza")
 if(PITCHNET_DEV_BUILD)
-    set(PITCHNET_PRODUCT_NAME "Pure Tune")
-    set(PITCHNET_BUNDLE_ID "com.keinoaza.puretune")
-    set(PITCHNET_PLUGIN_CODE PurT)
+    set(PITCHNET_PRODUCT_NAME "FlexaTune")
+    set(PITCHNET_BUNDLE_ID "com.keinoaza.flexatune")
+    set(PITCHNET_PLUGIN_CODE FlxT)
     message(STATUS
-        "Pure Tune: side-by-side build "
+        "FlexaTune: side-by-side build "
         "(product '${PITCHNET_PRODUCT_NAME}', plugin code ${PITCHNET_PLUGIN_CODE}, "
         "bundle id ${PITCHNET_BUNDLE_ID})")
 else()

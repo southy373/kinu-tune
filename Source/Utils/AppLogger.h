@@ -9,7 +9,7 @@
 
 /**
  * Simple file logger for debugging.
- * Logs to the Pure Tune logs folder (see PlatformPaths::getLogsDirectory)
+ * Logs to the FlexaTune logs folder (see PlatformPaths::getLogsDirectory)
  */
 class AppLogger {
 public:

@@ -6,26 +6,26 @@
  * Platform-specific path utilities.
  *
  * macOS:
- *   - Models: ~/Library/Application Support/Keinoaza/Pure Tune/models/, then
- *             /Library/Application Support/Keinoaza/Pure Tune/models/
- *   - Logs: ~/Library/Logs/Pure Tune/
- *   - Config: ~/Library/Pure Tune/
+ *   - Models: ~/Library/Application Support/Keinoaza/FlexaTune/models/, then
+ *             /Library/Application Support/Keinoaza/FlexaTune/models/
+ *   - Logs: ~/Library/Logs/FlexaTune/
+ *   - Config: ~/Library/FlexaTune/
  *
  * Windows:
- *   - Models: %APPDATA%/Keinoaza/Pure Tune/models/, then
- *             %PROGRAMDATA%/Keinoaza/Pure Tune/models/
- *   - Logs: %APPDATA%/Pure Tune/Logs/
- *   - Config: %APPDATA%/Pure Tune/
+ *   - Models: %APPDATA%/Keinoaza/FlexaTune/models/, then
+ *             %PROGRAMDATA%/Keinoaza/FlexaTune/models/
+ *   - Logs: %APPDATA%/FlexaTune/Logs/
+ *   - Config: %APPDATA%/FlexaTune/
  *
  * Linux:
  *   - Models: <exe_dir>/models/
- *   - Logs: ~/.config/Pure Tune/logs/
- *   - Config: ~/.config/Pure Tune/
+ *   - Logs: ~/.config/FlexaTune/logs/
+ *   - Config: ~/.config/FlexaTune/
  */
 namespace PlatformPaths
 {
     inline constexpr const char *kVendorFolderName = "Keinoaza";
-    inline constexpr const char *kProductFolderName = "Pure Tune";
+    inline constexpr const char *kProductFolderName = "FlexaTune";
 
     inline juce::File getProjectResourcesDirectory()
     {
@@ -51,7 +51,7 @@ namespace PlatformPaths
 
         return {};
 #else
-        // Pure Tune keeps its resources apart from PitchNet's. The per-user
+        // FlexaTune keeps its resources apart from PitchNet's. The per-user
         // folder comes first so a local install needs no administrator rights.
         auto resourcesUnder = [](juce::File::SpecialLocationType location)
         {
@@ -237,17 +237,17 @@ namespace PlatformPaths
     inline juce::File getLogsDirectory()
     {
 #if JUCE_MAC
-        // macOS: ~/Library/Logs/Pure Tune/
+        // macOS: ~/Library/Logs/FlexaTune/
         return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
             .getChildFile("Library/Logs")
             .getChildFile(kProductFolderName);
 #elif JUCE_WINDOWS
-        // Windows: %APPDATA%/Pure Tune/Logs/
+        // Windows: %APPDATA%/FlexaTune/Logs/
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
             .getChildFile(kProductFolderName)
             .getChildFile("Logs");
 #else
-        // Linux: ~/.config/Pure Tune/logs/
+        // Linux: ~/.config/FlexaTune/logs/
         return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
             .getChildFile(kProductFolderName)
             .getChildFile("logs");

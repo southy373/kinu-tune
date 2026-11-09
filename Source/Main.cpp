@@ -87,7 +87,7 @@ public:
 
     g.setColour(juce::Colours::white);
     g.setFont(titleFont);
-    g.drawText("Pure Tune", getLocalBounds().reduced(24, 20),
+    g.drawText("FlexaTune", getLocalBounds().reduced(24, 20),
                juce::Justification::centredTop);
 
     g.setColour(juce::Colour(APP_COLOR_PRIMARY));
@@ -145,7 +145,7 @@ class PitchNetApplication : public juce::JUCEApplication {
 public:
   PitchNetApplication() {}
 
-  const juce::String getApplicationName() override { return "Pure Tune"; }
+  const juce::String getApplicationName() override { return "FlexaTune"; }
 
   const juce::String getApplicationVersion() override { return "0.1.4"; }
 
@@ -169,7 +169,7 @@ public:
     const auto fileToOpen = findFileArgument(unreadablePath);
     if (unreadablePath.isNotEmpty()) {
       LOG("Command line file not found: " + unreadablePath);
-      std::cerr << "Pure Tune: file not found: " << unreadablePath << std::endl;
+      std::cerr << "FlexaTune: file not found: " << unreadablePath << std::endl;
     } else if (fileToOpen != juce::File{}) {
       LOG("Command line file: " + fileToOpen.getFullPathName());
     }

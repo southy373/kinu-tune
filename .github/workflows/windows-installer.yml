@@ -5,18 +5,18 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (for Kinu Tune) or version (for Pure Tune)"
+        description: "Release tag (for Kinu Tune) or version (for FlexaTune)"
         required: true
         default: "v0.1.4"
       pure_tune:
-        description: "Build the separate Pure Tune installer from a test-build run"
+        description: "Build the separate FlexaTune installer from a test-build run"
         type: boolean
         default: false
       artifact_run_id:
-        description: "Required for Pure Tune: successful Windows build run ID"
+        description: "Required for FlexaTune: successful Windows build run ID"
         required: false
       attach:
-        description: "Attach the installer to a release (normally leave off for Pure Tune)"
+        description: "Attach the installer to a release (normally leave off for FlexaTune)"
         type: boolean
         default: false
   workflow_call:
@@ -57,8 +57,8 @@ jobs:
         run: |
           $version = "$env:RELEASE_TAG".TrimStart('v')
           if ($env:PURE_TUNE -eq "true") {
-            if (-not $env:ARTIFACT_RUN_ID) { throw "Pure Tune requires artifact_run_id" }
-            $product = "Pure Tune"
+            if (-not $env:ARTIFACT_RUN_ID) { throw "FlexaTune requires artifact_run_id" }
+            $product = "FlexaTune"
             $stem = "Pure-Tune-$version-Windows-x64"
             gh run download "$env:ARTIFACT_RUN_ID" --repo "$env:GITHUB_REPOSITORY" --name "$stem-test" --dir downloaded
             $zip = Join-Path (Resolve-Path downloaded) "$stem.zip"
@@ -87,12 +87,12 @@ jobs:
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup --yes --no-progress | Out-Host }
-          if ($env:PRODUCT -eq "Pure Tune") {
-            $appId = "A5C88008-0B94-4C3C-9DF9-52D3EA81F1C1"
+          if ($env:PRODUCT -eq "FlexaTune") {
+            $appId = "7997E5BE-A7F9-477C-9593-136E3E5FB98F"
           } else {
             $appId = "38373E75-C136-4F15-8F5D-6F966750C257"
           }
-          & $iscc "/DAppVersion=$env:VERSION" "/DStageDir=$env:STAGE_DIR" "/DRedist=$(Join-Path $PWD 'vc_redist.x64.exe')" "/DProductName=$env:PRODUCT" "/DProductAppId=$appId" "/O$(Join-Path $PWD 'Output')" "packaging/windows/PureTune.iss"
+          & $iscc "/DAppVersion=$env:VERSION" "/DStageDir=$env:STAGE_DIR" "/DRedist=$(Join-Path $PWD 'vc_redist.x64.exe')" "/DProductName=$env:PRODUCT" "/DProductAppId=$appId" "/O$(Join-Path $PWD 'Output')" "packaging/windows/FlexaTune.iss"
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
           "SETUP_NAME=$env:SETUP_STEM.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 

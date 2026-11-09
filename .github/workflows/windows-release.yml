@@ -60,7 +60,7 @@ jobs:
         run: python tools/convert_bigvgan.py
 
       # Release tags keep the original Kinu Tune identity. Test builds from a branch
-      # use the separate Pure Tune identity so both can coexist in a DAW.
+      # use the separate FlexaTune identity so both can coexist in a DAW.
       # Use the runner's default Visual Studio generator (as upstream PitchNet
       # does). DirectML is on so the ONNX models (BigVGAN included) can run
       # on the GPU, with the redistributable DirectML.dll bundled next to
@@ -81,7 +81,7 @@ jobs:
         env:
           DEV_BUILD: ${{ inputs.ref != '' }}
         run: |
-          $product = if ($env:DEV_BUILD -eq "true") { "Pure Tune" } else { "Kinu Tune" }
+          $product = if ($env:DEV_BUILD -eq "true") { "FlexaTune" } else { "Kinu Tune" }
           ./tools/windows/check-vst3.ps1 -Vst3 "build/PitchNetPlugin_artefacts/Release/VST3/$product.vst3"
 
       - name: Package
@@ -89,7 +89,7 @@ jobs:
         env:
           DEV_BUILD: ${{ inputs.ref != '' }}
         run: |
-          $product = if ($env:DEV_BUILD -eq "true") { "Pure Tune" } else { "Kinu Tune" }
+          $product = if ($env:DEV_BUILD -eq "true") { "FlexaTune" } else { "Kinu Tune" }
           $version = "$env:RELEASE_TAG".TrimStart('v')
           $prefix = if ($env:DEV_BUILD -eq "true") { "Pure-Tune" } else { "Kinu-Tune" }
           $name = "$prefix-$version-Windows-x64"
