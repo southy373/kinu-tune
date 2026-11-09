@@ -55,14 +55,26 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
     handles.back().bounds = {cx - s * 0.5f, cy - s * 0.5f, s, s};
   };
 
+  // Batch 2 (B5): the tilt anchor rides the top edge at its fraction of
+  // the segment length; Alt+tilt rotates the contour around it. It is
+  // laid out FIRST in "show all" mode so its hit area wins the strip
+  // along the top edge: the vibrato control sits just above the edge and
+  // its (tolerance-expanded) bounds would otherwise swallow clicks aimed
+  // at the anchor diamond.
+  if (options.showAll && right - left >= minSegmentWidthForCorners)
+    addSquare(HandleType::TiltAnchor,
+              left + note->getTiltAnchor() * (right - left), top);
+
   // Default set: straighten (top centre), correct pitch (below the bottom
   // centre), glue (outside the bottom corners).
   addSquare(HandleType::Vibrato, centreX, top - s * 0.5f - gap);
   addSquare(HandleType::CorrectPitch, centreX, bottom + s * 0.5f + gap);
 
-  // No split line on the segment body: clicking a segment must only select
-  // it (user request, 2026-10-19). Splitting is Alt/Option-click or the
-  // Split tool.
+  // Batch 2 (B8): a split control inside the bottom-centre edge, next to
+  // glue. This supersedes the 2026-10-19 "no split control" layout note:
+  // the control sits on the edge, not the body, so plain body clicks still
+  // only select; splitting by handle, Alt/Option-click or the Split tool.
+  addSquare(HandleType::Split, centreX, bottom - s * 0.5f - 1.0f);
 
   if (options.canGlueLeft)
     addSquare(HandleType::GlueLeft, left - s * 0.5f - 1.0f, bottom - s * 0.5f);
@@ -78,6 +90,15 @@ void PitchToolHandles::updateHandles(const std::vector<Note*>& selectedNotes,
   addSquare(HandleType::TiltRight, right - s * 0.5f, top - s * 0.5f - gap);
   addSquare(HandleType::Formant, left + s * 0.5f + 1.0f, bottom - s * 0.5f - 1.0f);
   addSquare(HandleType::Amplitude, right - s * 0.5f - 1.0f, bottom - s * 0.5f - 1.0f);
+
+  // Batch 2 (B7): the straighten-range boundaries sit just inside the top
+  // edge at their fractions of the segment length. (The tilt anchor was
+  // laid out earlier, before the default set, for hit priority.)
+  const float rangeY = top + s * 0.5f + 2.0f;
+  addSquare(HandleType::StraightenRangeLeft,
+            left + note->getStraightenRangeStart() * (right - left), rangeY);
+  addSquare(HandleType::StraightenRangeRight,
+            left + note->getStraightenRangeEnd() * (right - left), rangeY);
 }
 
 void PitchToolHandles::draw(juce::Graphics& g) const {
@@ -87,6 +108,22 @@ void PitchToolHandles::draw(juce::Graphics& g) const {
     const auto& handle = handles[i];
     const bool hovered = i == hoveredHandleIndex;
     const auto bounds = handle.bounds;
+
+    // Batch 2 (B5): the tilt anchor is a diamond straddling the top edge,
+    // so it reads as a pivot rather than another square control.
+    if (handle.type == HandleType::TiltAnchor) {
+      const float cx = bounds.getCentreX();
+      const float cy = bounds.getCentreY();
+      const float r = bounds.getWidth() * 0.5f;
+      juce::Path diamond;
+      diamond.addTriangle(cx, cy - r, cx + r, cy, cx, cy + r);
+      diamond.addTriangle(cx, cy - r, cx - r, cy, cx, cy + r);
+      g.setColour(hovered ? juce::Colours::white : fill);
+      g.fillPath(diamond);
+      g.setColour(hovered ? fill : edge);
+      g.strokePath(diamond, juce::PathStrokeType(1.0f));
+      continue;
+    }
 
     g.setColour(hovered ? juce::Colours::white : fill);
     g.fillRect(bounds);
@@ -102,6 +139,31 @@ void PitchToolHandles::draw(juce::Graphics& g) const {
       arrow.addTriangle(cx + d, cy, cx - d, cy - 2.5f, cx - d, cy + 2.5f);
       g.setColour(hovered ? fill : juce::Colours::white);
       g.fillPath(arrow);
+    }
+
+    // Batch 2 (B7): range boundaries carry a tick pointing into the range.
+    if (handle.type == HandleType::StraightenRangeLeft ||
+        handle.type == HandleType::StraightenRangeRight) {
+      const float cx = bounds.getCentreX();
+      const float cy = bounds.getCentreY();
+      const float dir = handle.type == HandleType::StraightenRangeLeft ? 1.0f : -1.0f;
+      juce::Path tick;
+      tick.addTriangle(cx, cy, cx + dir * 3.0f, cy - 2.5f, cx + dir * 3.0f, cy + 2.5f);
+      g.setColour(hovered ? fill : juce::Colours::white);
+      g.fillPath(tick);
+    }
+
+    // The split control carries a centre bar with triangles pointing away
+    // from it: the segment divides here.
+    if (handle.type == HandleType::Split) {
+      const float cx = bounds.getCentreX();
+      const float cy = bounds.getCentreY();
+      g.setColour(hovered ? fill : juce::Colours::white);
+      g.fillRect(cx - 0.75f, cy - 3.0f, 1.5f, 6.0f);
+      juce::Path triangles;
+      triangles.addTriangle(cx - 1.5f, cy, cx - 3.5f, cy - 2.0f, cx - 3.5f, cy + 2.0f);
+      triangles.addTriangle(cx + 1.5f, cy, cx + 3.5f, cy - 2.0f, cx + 3.5f, cy + 2.0f);
+      g.fillPath(triangles);
     }
   }
 }

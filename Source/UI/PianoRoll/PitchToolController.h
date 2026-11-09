@@ -85,6 +85,9 @@ public:
 private:
   Project* project = nullptr;
   bool dragging = false;
+  // Alt held when the drag began: tilt handles rotate around the anchor
+  // (batch 2, B6) instead of tilting one edge.
+  bool dragAltDown = false;
   PitchToolHandles::HandleType activeHandleType = PitchToolHandles::HandleType::None;
   Note* activeHandleNote = nullptr;
   std::vector<Note*> affectedNotes;

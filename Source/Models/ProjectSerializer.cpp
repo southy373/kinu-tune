@@ -844,6 +844,16 @@ juce::var ProjectSerializer::noteToJson(const Note& note,
     // Pitch tool transformation parameters (non-destructive)
     obj->setProperty("tiltLeft", note.getTiltLeft());
     obj->setProperty("tiltRight", note.getTiltRight());
+    // Batch 2 geometry (B5 anchor, B7 range): written only when moved from
+    // the defaults, so untouched projects keep their exact old shape.
+    if (std::abs(note.getTiltAnchor() - 0.5f) > 1.0e-6f)
+        obj->setProperty("tiltAnchor", note.getTiltAnchor());
+    if (note.getStraightenRangeStart() > 1.0e-6f ||
+        note.getStraightenRangeEnd() < 1.0f - 1.0e-6f)
+    {
+        obj->setProperty("straightenRangeStart", note.getStraightenRangeStart());
+        obj->setProperty("straightenRangeEnd", note.getStraightenRangeEnd());
+    }
     obj->setProperty("vibrato", note.getVibrato());
     obj->setProperty("pitchDrift", note.getPitchDrift());
     obj->setProperty("smoothLeftFrames", note.getSmoothLeftFrames());
@@ -913,6 +923,11 @@ bool ProjectSerializer::noteFromJson(Note& note, const juce::var& json,
     // Pitch tool transformation parameters (with defaults for backwards compatibility)
     note.setTiltLeft(static_cast<float>(json.getProperty("tiltLeft", 0.0)));
     note.setTiltRight(static_cast<float>(json.getProperty("tiltRight", 0.0)));
+    note.setTiltAnchor(static_cast<float>(json.getProperty("tiltAnchor", 0.5)));
+    note.setStraightenRangeStart(
+        static_cast<float>(json.getProperty("straightenRangeStart", 0.0)));
+    note.setStraightenRangeEnd(
+        static_cast<float>(json.getProperty("straightenRangeEnd", 1.0)));
     note.setVibrato(static_cast<float>(json.getProperty("vibrato", 1.0)));
     note.setPitchDrift(static_cast<float>(json.getProperty("pitchDrift", 1.0)));
     note.setSmoothLeftFrames(json.getProperty("smoothLeftFrames", 0));

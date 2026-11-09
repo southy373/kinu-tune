@@ -11,6 +11,9 @@ struct TransformParams
 {
     float tiltLeft = 0.0f;
     float tiltRight = 0.0f;
+    float tiltAnchor = 0.5f;          // batch 2 (B5): rotation pivot
+    float straightenRangeStart = 0.0f; // batch 2 (B7): vibrato range
+    float straightenRangeEnd = 1.0f;
     float formantShift = 0.0f;
     float volumeDb = 0.0f;
     float vibrato = 1.0f;
@@ -31,6 +34,9 @@ struct TransformParams
         TransformParams p;
         p.tiltLeft = note.getTiltLeft();
         p.tiltRight = note.getTiltRight();
+        p.tiltAnchor = note.getTiltAnchor();
+        p.straightenRangeStart = note.getStraightenRangeStart();
+        p.straightenRangeEnd = note.getStraightenRangeEnd();
         p.formantShift = note.getFormantShift();
         p.volumeDb = note.getVolumeDb();
         p.vibrato = note.getVibrato();
@@ -50,6 +56,9 @@ struct TransformParams
         NotePitch::restore(note, midiNote, correctionSource);
         note.setTiltLeft(tiltLeft);
         note.setTiltRight(tiltRight);
+        note.setTiltAnchor(tiltAnchor);
+        note.setStraightenRangeStart(straightenRangeStart);
+        note.setStraightenRangeEnd(straightenRangeEnd);
         note.setVibrato(vibrato);
         note.setPitchDrift(pitchDrift);
         note.setFormantShift(formantShift);
@@ -64,6 +73,9 @@ struct TransformParams
     {
         return tiltLeft == other.tiltLeft &&
                tiltRight == other.tiltRight &&
+               tiltAnchor == other.tiltAnchor &&
+               straightenRangeStart == other.straightenRangeStart &&
+               straightenRangeEnd == other.straightenRangeEnd &&
                formantShift == other.formantShift &&
                volumeDb == other.volumeDb &&
                vibrato == other.vibrato &&
@@ -83,6 +95,9 @@ struct TransformParams
 
     bool isIdentity() const
     {
+        // tiltAnchor and the straighten range are deliberately absent: on
+        // their own they change no audio (the range acts only through
+        // vibrato, which is checked below).
         return tiltLeft == 0.0f &&
                tiltRight == 0.0f &&
                formantShift == 0.0f &&

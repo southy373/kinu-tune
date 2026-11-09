@@ -25,6 +25,18 @@ std::vector<float> scaleVibrato(const std::vector<float>& deltaPitch,
                                 float factor);
 
 /**
+ * Scales deviations only inside a sub-range of the note (batch 2, B7).
+ *
+ * `rangeStart`/`rangeEnd` are fractions of the note length. The factor
+ * applies in full inside the range and feathers out over a short ramp
+ * just outside each boundary, so the curve stays continuous.
+ */
+std::vector<float> scaleVibratoInRange(const std::vector<float>& deltaPitch,
+                                       float factor,
+                                       float rangeStart,
+                                       float rangeEnd);
+
+/**
  * Smooths one boundary to connect with adjacent pitch context.
  *
  * For left side, fades from `targetPitch` to the note boundary.
@@ -75,6 +87,8 @@ struct AdjacentNoteContext
  * @param smoothRightFrames Smoothing transition length at right boundary
  * @param adjacentContext Context for adjacent notes (for boundary smoothing)
  * @param pitchDrift Slow-trend factor (1.0=original, 0.0=removed)
+ * @param vibratoRangeStart Straighten range start, fraction (B7; 0 = all)
+ * @param vibratoRangeEnd Straighten range end, fraction (B7; 1 = all)
  * @return Transformed deltaPitch curve
  */
 std::vector<float> applyAllTransformations(const std::vector<float>& originalDelta,
@@ -84,6 +98,8 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
                                            int smoothLeftFrames,
                                            int smoothRightFrames,
                                            const AdjacentNoteContext& adjacentContext = {},
-                                           float pitchDrift = 1.0f);
+                                           float pitchDrift = 1.0f,
+                                           float vibratoRangeStart = 0.0f,
+                                           float vibratoRangeEnd = 1.0f);
 
 } // namespace PitchToolOperations

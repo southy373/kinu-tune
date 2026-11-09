@@ -22,6 +22,10 @@ public:
     CorrectPitch, // VariAudio "Correct Pitch": drag toward the nearest semitone
     GlueLeft,     // click: glue with the previous segment
     GlueRight,    // click: glue with the next segment
+    Split,        // click: split the segment at this point (batch 2, B8)
+    TiltAnchor,   // drag horizontally: move the tilt rotation pivot (B5)
+    StraightenRangeLeft,  // drag horizontally: straighten range start (B7)
+    StraightenRangeRight, // drag horizontally: straighten range end (B7)
     None
   };
 

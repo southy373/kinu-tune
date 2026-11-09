@@ -37,6 +37,7 @@ bool PitchToolController::mouseDown(const juce::MouseEvent& e,
   const auto& handle = handles.getHandle(hitIndex);
   activeHandleType = handle.type;
   activeHandleNote = handle.note;
+  dragAltDown = e.mods.isAltDown();
 
   // The visible top controls belong to the hovered note. When it is part of a
   // multi-note selection, slopes and vibrato are group edits, so capture the
@@ -232,24 +233,64 @@ void PitchToolController::applyOperation(std::vector<Note*>& notes,
     switch (type)
     {
       case PitchToolHandles::HandleType::TiltLeft:
+      case PitchToolHandles::HandleType::TiltRight:
       {
-        // Drag UP = positive semitoneDelta = left edge goes UP
-        const float amount = semitoneDelta;
-        note->setTiltLeft(origParams.tiltLeft + amount);
-        
+        if (dragAltDown)
+        {
+          // Batch 2 (B6): Alt+tilt rotates the contour around the anchor.
+          // The drag amount is the shift at the end furthest from the
+          // anchor; the tilt line through the anchor with that end shift
+          // is tiltLeft/tiltRight adjusted by the anchor lever arms.
+          const float anchor = origParams.tiltAnchor;
+          const float lever = std::max(anchor, 1.0f - anchor);
+          const float farShift = semitoneDelta;
+          note->setTiltLeft(origParams.tiltLeft - (farShift / lever) * anchor);
+          note->setTiltRight(origParams.tiltRight +
+                             (farShift / lever) * (1.0f - anchor));
+        }
+        else if (type == PitchToolHandles::HandleType::TiltLeft)
+        {
+          // Drag UP = positive semitoneDelta = left edge goes UP
+          note->setTiltLeft(origParams.tiltLeft + semitoneDelta);
+        }
+        else
+        {
+          note->setTiltRight(origParams.tiltRight + semitoneDelta);
+        }
+
         // Calculate tilt mean shift
         const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
         liveMidi = origParams.midiNote + newTiltMean;
         break;
       }
-      case PitchToolHandles::HandleType::TiltRight:
+      case PitchToolHandles::HandleType::TiltAnchor:
       {
-        const float amount = semitoneDelta;
-        note->setTiltRight(origParams.tiltRight + amount);
-        
-        // Calculate tilt mean shift
-        const float newTiltMean = (note->getTiltLeft() + note->getTiltRight()) / 2.0f;
-        liveMidi = origParams.midiNote + newTiltMean;
+        // Batch 2 (B5): horizontal drag moves the rotation pivot. No audio
+        // change: liveMidi stays at the original pitch, and the anchor
+        // rides along in the undo record via TransformParams.
+        const float widthPx = juce::jmax(
+            1.0f, static_cast<float>(framesToSeconds(note->getDurationFrames())) *
+                      mapper.getPixelsPerSecond());
+        note->setTiltAnchor(origParams.tiltAnchor + dragDeltaX / widthPx);
+        break;
+      }
+      case PitchToolHandles::HandleType::StraightenRangeLeft:
+      case PitchToolHandles::HandleType::StraightenRangeRight:
+      {
+        // Batch 2 (B7): horizontal drags move the straighten boundaries,
+        // kept a small minimum distance apart.
+        const float widthPx = juce::jmax(
+            1.0f, static_cast<float>(framesToSeconds(note->getDurationFrames())) *
+                      mapper.getPixelsPerSecond());
+        const float delta = dragDeltaX / widthPx;
+        if (type == PitchToolHandles::HandleType::StraightenRangeLeft)
+          note->setStraightenRangeStart(juce::jlimit(
+              0.0f, origParams.straightenRangeEnd - 0.02f,
+              origParams.straightenRangeStart + delta));
+        else
+          note->setStraightenRangeEnd(juce::jlimit(
+              origParams.straightenRangeStart + 0.02f, 1.0f,
+              origParams.straightenRangeEnd + delta));
         break;
       }
       case PitchToolHandles::HandleType::Formant:

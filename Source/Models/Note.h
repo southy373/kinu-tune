@@ -140,6 +140,24 @@ public:
     void setTiltLeft(float tilt) { tiltLeft = tilt; }
     float getTiltRight() const { return tiltRight; }
     void setTiltRight(float tilt) { tiltRight = tilt; }
+    // Pivot of an Alt+tilt rotation (batch 2, B5), as a fraction of the
+    // segment length: 0 = left edge, 1 = right edge. Moving the anchor on
+    // its own changes no audio; it only sets where a rotation turns.
+    float getTiltAnchor() const { return tiltAnchor; }
+    void setTiltAnchor(float anchor) { tiltAnchor = juce::jlimit(0.0f, 1.0f, anchor); }
+    // Sub-range of the segment the Straighten (vibrato) factor applies to
+    // (batch 2, B7), as fractions of the segment length. The defaults cover
+    // the whole segment, which is the pre-batch-2 behaviour.
+    float getStraightenRangeStart() const { return straightenRangeStart; }
+    void setStraightenRangeStart(float start)
+    {
+        straightenRangeStart = juce::jlimit(0.0f, 1.0f, start);
+    }
+    float getStraightenRangeEnd() const { return straightenRangeEnd; }
+    void setStraightenRangeEnd(float end)
+    {
+        straightenRangeEnd = juce::jlimit(0.0f, 1.0f, end);
+    }
     // Scales deviations from the note center: 1.0 preserves the recorded
     // contour, 0.0 flattens it, and negative values invert it. The range is
     // limited to -10.0 through 10.0 (-1000% through 1000%).
@@ -263,6 +281,9 @@ private:
     // Pitch tool transformation parameters (non-destructive, stored as parameters)
     float tiltLeft = 0.0f;           // Tilt amount at left edge (semitones)
     float tiltRight = 0.0f;          // Tilt amount at right edge (semitones)
+    float tiltAnchor = 0.5f;         // Rotation pivot, fraction of length (B5)
+    float straightenRangeStart = 0.0f; // Straighten range, fractions (B7)
+    float straightenRangeEnd = 1.0f;
     float vibrato = 1.0f;            // 1.0=original, 0.0=flat, >1.0=amplify, <0.0=invert
     float pitchDrift = 1.0f;
     int smoothLeftFrames = 0;        // Smoothing transition length at left boundary

@@ -52,6 +52,38 @@ std::vector<float> scaleVibrato(const std::vector<float>& deltaPitch,
   return result;
 }
 
+std::vector<float> scaleVibratoInRange(const std::vector<float>& deltaPitch,
+                                       float factor,
+                                       float rangeStart,
+                                       float rangeEnd) {
+  if (deltaPitch.size() < 2) {
+    return deltaPitch;
+  }
+
+  const float lo = std::clamp(rangeStart, 0.0f, 1.0f);
+  const float hi = std::clamp(rangeEnd, lo, 1.0f);
+  // The factor fades in/out over a short ramp outside each boundary (at
+  // most 5% of the note, never more than half the range itself).
+  const float feather = std::min(0.05f, (hi - lo) * 0.5f);
+
+  std::vector<float> result(deltaPitch);
+  const float invLastIndex = 1.0f / static_cast<float>(deltaPitch.size() - 1);
+  for (size_t i = 0; i < result.size(); ++i) {
+    const float t = static_cast<float>(i) * invLastIndex;
+    float weight;
+    if (feather > 0.0f) {
+      weight = std::min((t - (lo - feather)) / feather,
+                        ((hi + feather) - t) / feather);
+      weight = std::clamp(weight, 0.0f, 1.0f);
+    } else {
+      weight = (t >= lo && t <= hi) ? 1.0f : 0.0f;
+    }
+    result[i] = deltaPitch[i] * (1.0f + (factor - 1.0f) * weight);
+  }
+
+  return result;
+}
+
 std::vector<float> smoothBoundary(const std::vector<float>& deltaPitch,
                                   int side,
                                   int transitionFrames,
@@ -149,7 +181,9 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
                                            int smoothLeftFrames,
                                            int smoothRightFrames,
                                            const AdjacentNoteContext& adjacentContext,
-                                           float pitchDrift) {
+                                           float pitchDrift,
+                                           float vibratoRangeStart,
+                                           float vibratoRangeEnd) {
   if (originalDelta.empty()) {
     return {};
   }
@@ -158,8 +192,14 @@ std::vector<float> applyAllTransformations(const std::vector<float>& originalDel
   std::vector<float> result = originalDelta;
 
   // 1. Apply modulation before tilt, preserving the tilt ramp at 0%.
+  // Batch 2 (B7): a narrowed straighten range limits the factor to that
+  // sub-range of the note; the default full range is the old behaviour.
   if (std::abs(vibrato - 1.0f) > 0.001f) {
-    result = scaleVibrato(result, vibrato);
+    if (vibratoRangeStart <= 0.0f && vibratoRangeEnd >= 1.0f)
+      result = scaleVibrato(result, vibrato);
+    else
+      result = scaleVibratoInRange(result, vibrato, vibratoRangeStart,
+                                   vibratoRangeEnd);
   }
 
   // Adjust the slow trend after the existing whole-contour vibrato scaling.

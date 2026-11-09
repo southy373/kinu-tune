@@ -3686,6 +3686,11 @@ bool PianoRollComponent::handleSmartControlClick(float worldX, float worldY,
       if (auto *next = findContiguousNeighbour(*handle.note, true))
         changed = noteSplitter->mergeNotes(handle.note, next);
       break;
+    case PitchToolHandles::HandleType::Split:
+      // Batch 2 (B8): split where the control was clicked (its centre is
+      // the segment's midpoint; the click point is within a few pixels).
+      changed = noteSplitter->splitNoteAtX(handle.note, worldX);
+      break;
     default:
       return false;
   }

@@ -266,10 +266,12 @@ namespace PitchCurveProcessor
         const auto context = buildAdjacentContext(project.getNotes(), note);
         auto zero = PitchToolOperations::applyAllTransformations(source,
             note.getTiltLeft(), note.getTiltRight(), note.getVibrato(),
-            note.getSmoothLeftFrames(), note.getSmoothRightFrames(), context, 0.0f);
+            note.getSmoothLeftFrames(), note.getSmoothRightFrames(), context, 0.0f,
+            note.getStraightenRangeStart(), note.getStraightenRangeEnd());
         auto one = PitchToolOperations::applyAllTransformations(source,
             note.getTiltLeft(), note.getTiltRight(), note.getVibrato(),
-            note.getSmoothLeftFrames(), note.getSmoothRightFrames(), context, 1.0f);
+            note.getSmoothLeftFrames(), note.getSmoothRightFrames(), context, 1.0f,
+            note.getStraightenRangeStart(), note.getStraightenRangeEnd());
         for (size_t i = 0; i < one.size(); ++i)
             one[i] = (one[i] - zero[i]) * note.getDeltaScale();
         return one;
@@ -337,7 +339,9 @@ namespace PitchCurveProcessor
                 note.getSmoothLeftFrames(),
                 note.getSmoothRightFrames(),
                 adjacentContext,
-                note.getPitchDrift()
+                note.getPitchDrift(),
+                note.getStraightenRangeStart(),
+                note.getStraightenRangeEnd()
             );
 
             // Apply per-note delta scale/offset (from delta control handles)
@@ -434,7 +438,9 @@ namespace PitchCurveProcessor
                 note->getSmoothLeftFrames(),
                 note->getSmoothRightFrames(),
                 adjacentContext,
-                note->getPitchDrift()
+                note->getPitchDrift(),
+                note->getStraightenRangeStart(),
+                note->getStraightenRangeEnd()
             );
 
             const float dScale = note->getDeltaScale();
@@ -516,7 +522,9 @@ namespace PitchCurveProcessor
                 note->getSmoothLeftFrames(),
                 note->getSmoothRightFrames(),
                 adjacentContext,
-                note->getPitchDrift()
+                note->getPitchDrift(),
+                note->getStraightenRangeStart(),
+                note->getStraightenRangeEnd()
             );
 
             // Apply per-note delta scale/offset
