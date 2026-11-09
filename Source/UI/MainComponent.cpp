@@ -523,11 +523,14 @@ MainComponent::MainComponent(bool enableAudioDevice)
                                 VariAudioInspector::preferredWidth);
 
   // Add parameter panel to workspace.
+  // Batch 3: the parameter panel starts open.
   workspace.addPanel("parameters", TR("panel.parameters"), &parameterPanel,
-                     false);
+                     true);
 
   // Left side panel (slides in from the left, same width as the right panel).
   workspace.setLeftPanelContent("tracks", TR("panel.tracks"), &trackListPanel);
+  // Batch 3: the left panel starts expanded too.
+  workspace.showLeftPanel(true);
   trackListPanel.onPreferredHeightChanged = [this]()
   {
     workspace.refreshLeftPanelContentHeight();

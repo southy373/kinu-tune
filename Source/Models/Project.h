@@ -142,7 +142,7 @@ struct MacroParameters
     int pitchReferenceHz = 440;
     bool snapToSemitones = true;
     DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
-    TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
+    TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Time;
     int timelineBeatNumerator = 4;
     int timelineBeatDenominator = 4;
     double timelineTempoBpm = 120.0;

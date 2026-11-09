@@ -196,7 +196,7 @@ private:
     bool snapToSemitones = true;
     DragSnapMode dragSnapMode = DragSnapMode::Chromatic;
     int pitchReferenceHz = 440;
-    TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Beats;
+    TimelineDisplayMode timelineDisplayMode = TimelineDisplayMode::Time;
     int timelineBeatNumerator = 4;
     int timelineBeatDenominator = 4;
     double timelineTempoBpm = 120.0;

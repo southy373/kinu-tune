@@ -53,8 +53,8 @@ constexpr int kBrightnessCardHeight =
 constexpr int kLanguageCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kLanguageRowHeight + kInnerPadY;
 
-// Five cards are always present - Rendering, Language, Time, Pitch and UI
-// Brightness - so four gaps sit between them.
+// Five cards are always present - Rendering, Time, Pitch, UI Brightness
+// and Language - so four gaps sit between them.
 constexpr int kPreferredPanelHeight =
     kCardPadY * 2 + kCardGap * 4 + kSynthesisCardHeight + kLanguageCardHeight +
     kTimeCardHeight + kPitchCardHeight + kBrightnessCardHeight;
@@ -548,30 +548,9 @@ void ParameterPanel::resized()
         synthesisCardBottom - synthesisCardStart);
 
     // =========================================================================
-    // LANGUAGE CARD
-    //
-    // Sits directly below Rendering and is always present, so its height is
-    // part of kPreferredPanelHeight.
-    // =========================================================================
-    const int languageCardStart = synthesisCardBottom + cardGap;
-    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
-                                  languageCardStart + innerPadY,
-                                  cardArea.getWidth() - innerPadX * 2,
-                                  cardArea.getBottom() - languageCardStart - innerPadY * 2);
-
-    languageSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
-    bounds.removeFromTop(kSectionLabelGap);
-    languageSelectorButton.setBounds(bounds.removeFromTop(kLanguageRowHeight));
-
-    const int languageCardBottom = bounds.getY() + innerPadY;
-    languageCardBounds = juce::Rectangle<int>(cardArea.getX(), languageCardStart,
-                                              cardArea.getWidth(),
-                                              languageCardBottom - languageCardStart);
-
-    // =========================================================================
     // TIME CARD
     // =========================================================================
-    const int timeCardStart = languageCardBottom + cardGap;
+    const int timeCardStart = synthesisCardBottom + cardGap;
     bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX, timeCardStart + innerPadY,
                                    cardArea.getWidth() - innerPadX * 2, cardArea.getBottom() - timeCardStart - innerPadY * 2);
 
@@ -667,6 +646,27 @@ void ParameterPanel::resized()
         cardArea.getX(), brightnessCardStart, cardArea.getWidth(),
         brightnessCardBottom - brightnessCardStart);
 
+    // =========================================================================
+    // LANGUAGE CARD
+    //
+    // Batch 3: sits at the bottom of the panel. Always present, so its
+    // height is part of kPreferredPanelHeight.
+    // =========================================================================
+    const int languageCardStart = brightnessCardBottom + cardGap;
+    bounds = juce::Rectangle<int>(cardArea.getX() + innerPadX,
+                                  languageCardStart + innerPadY,
+                                  cardArea.getWidth() - innerPadX * 2,
+                                  cardArea.getBottom() - languageCardStart - innerPadY * 2);
+
+    languageSectionLabel.setBounds(bounds.removeFromTop(kSectionLabelHeight));
+    bounds.removeFromTop(kSectionLabelGap);
+    languageSelectorButton.setBounds(bounds.removeFromTop(kLanguageRowHeight));
+
+    const int languageCardBottom = bounds.getY() + innerPadY;
+    languageCardBounds = juce::Rectangle<int>(cardArea.getX(), languageCardStart,
+                                              cardArea.getWidth(),
+                                              languageCardBottom - languageCardStart);
+
     // The stack is laid out at fixed sizes, so given at least the height it
     // asks for its bottom edge must land exactly where getPreferredHeight()
     // says it will - that value is what the hosting panel scrolls against. A
@@ -674,7 +674,7 @@ void ParameterPanel::resized()
     // out, which is the very case the scrolling exists to avoid.
     const int preferredHeight = getPreferredHeight();
     jassert(outerBounds.getHeight() < preferredHeight ||
-            brightnessCardBottom + cardPadY - outerBounds.getY() ==
+            languageCardBottom + cardPadY - outerBounds.getY() ==
                 preferredHeight);
     juce::ignoreUnused(preferredHeight);
 }
@@ -1001,7 +1001,7 @@ void ParameterPanel::updateGlobalSliders()
         snapToSemitones = true;
         dragSnapMode = DragSnapMode::Chromatic;
         pitchReferenceHz = 440;
-        timelineDisplayMode = TimelineDisplayMode::Beats;
+        timelineDisplayMode = TimelineDisplayMode::Time;
         timelineBeatNumerator = 4;
         timelineBeatDenominator = 4;
         timelineTempoBpm = 120.0;

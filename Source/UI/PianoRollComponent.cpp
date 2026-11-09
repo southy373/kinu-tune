@@ -3021,7 +3021,7 @@ void PianoRollComponent::setProject(Project *proj)
                      : DragSnapMode::Chromatic;
   timelineDisplayMode = project != nullptr
                             ? project->getTimelineDisplayMode()
-                            : TimelineDisplayMode::Beats;
+                            : TimelineDisplayMode::Time;
   timelineBeatNumerator = project != nullptr ? project->getTimelineBeatNumerator() : 4;
   timelineBeatDenominator =
       project != nullptr ? project->getTimelineBeatDenominator() : 4;
