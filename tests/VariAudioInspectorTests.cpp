@@ -5,7 +5,6 @@
 #include "../Source/Audio/ResampledLoopAudition.h"
 #include "../Source/Models/ProjectSerializer.h"
 #include "../Source/UI/PianoRollComponent.h"
-#include "../Source/UI/PianoRoll/PitchDrawingConfirmationPanel.h"
 #include "../Source/UI/VariAudioInspector.h"
 #include "../Source/Undo/PitchUndoManager.h"
 #include "../Source/Utils/PitchMacroScope.h"
@@ -120,6 +119,22 @@ int main()
         CHECK(near(f.note(0).getMidiNote(), 60.3f));
         CHECK(near(f.note(0).getLastNonMacroMidiNote(), 60.3f));
         CHECK(!f.history.canUndo());
+    }
+
+    // --- Correct Pitch, negative: pushes away from the semitone ----------
+    // (Batch 3: the fader is bipolar, a fine-adjust control. The note was
+    // sung at 60.3 against a 60 target; -50% moves it half its deviation
+    // further out, to 60.45, and the value reads back as -50.)
+    {
+        Fixture f;
+        f.note(0).setSelected(true);
+        f.roll.beginInspectorEdit(Param::CorrectPitch);
+        f.roll.setInspectorEditValue(-50.0f);
+        CHECK(near(f.note(0).getMidiNote(), 60.45f, 0.01f));
+        f.roll.endInspectorEdit();
+        CHECK(near(*f.roll.getInspectorValue(Param::CorrectPitch), -50.0f, 0.5f));
+        f.history.undo();
+        CHECK(near(f.note(0).getMidiNote(), 60.3f));
     }
 
     // --- Flatten, drift, formant: one value for all targets, undoable ------
@@ -678,25 +693,32 @@ int main()
         CHECK(f.note(1).hasBakedDeltaPitch());              // on the baked-delta model
         CHECK(near(f.note(0).getMidiNote(), 60.3f));        // neighbours untouched
 
-        // Discarding restores the analysed state exactly.
-        f.roll.cancelPitchDrawingPreview();
-        CHECK(near(f.note(1).getMidiNote(), 61.8f));
-        CHECK(!f.note(1).hasBakedDeltaPitch());
-
-        // Draw again and confirm: one undo step restores the original.
-        f.roll.mouseDown(event(f.roll, {xAt(102), yAt(63.8f)}, left, 1));
-        f.roll.mouseDrag(event(f.roll, {xAt(198), yAt(63.8f)}, left, 1));
-        f.roll.mouseUp(event(f.roll, {xAt(198), yAt(63.8f)}, left, 1));
-        auto* panel = findChildren<PitchDrawingConfirmationPanel>(f.roll).front();
-        CHECK(panel != nullptr && panel->onApply != nullptr);
-        panel->onApply();
-        CHECK(near(f.note(1).getMidiNote(), 63.8f, 0.15f));
+        // Batch 3: the stroke committed on mouseUp - there is no Apply
+        // step (and no confirmation panel) any more. Undo/redo treat it
+        // like any other edit.
         CHECK(f.history.canUndo());
         f.history.undo();
         CHECK(near(f.note(1).getMidiNote(), 61.8f));
         CHECK(!f.note(1).hasBakedDeltaPitch());
         f.history.redo();
         CHECK(near(f.note(1).getMidiNote(), 63.8f, 0.15f));
+
+        // Erasing (double-click) removes the committed drawing around
+        // the click as its own undoable action, leaving the rest of the
+        // stroke in place. (Assert on the resulting curve - base plus
+        // baked - because the erase session re-centres the segment on
+        // its curve like any drawing session, which shifts the split
+        // between the two without moving the curve itself.)
+        f.roll.mouseDoubleClick(event(f.roll, {xAt(150), yAt(63.8f)}, left, 2));
+        const auto& bakedAfterErase = f.note(1).getBakedDeltaPitch();
+        const auto& baseAfterErase = f.project.getAudioData().basePitch;
+        CHECK(bakedAfterErase.size() > 60);
+        CHECK(near(baseAfterErase[150] + bakedAfterErase[50], 61.8f, 0.1f));
+        CHECK(near(baseAfterErase[110] + bakedAfterErase[10], 63.8f, 0.1f));
+        f.history.undo();
+        const auto& baseUndone = f.project.getAudioData().basePitch;
+        CHECK(near(baseUndone[150] + f.note(1).getBakedDeltaPitch()[50],
+                   63.8f, 0.1f));
 
         // A stroke that crosses the gap (frames 200-250 own no segment)
         // breaks there: it still reaches segment 2, but segment 0 and the
@@ -1050,7 +1072,11 @@ int main()
         };
         for (int i = 0; i < 5; ++i) CHECK(key(juce::KeyPress::upKey, true));
         CHECK(near(f.note(0).getMidiNote(), 60.35f));
-        CHECK(near(*f.roll.getInspectorValue(Param::CorrectPitch), 0.0f));
+        // Batch 3: with the bipolar fader, sitting 5 cents further from
+        // the target than sung honestly reads as a negative correction
+        // (was: unipolar readback reported 0 here). The out-and-back
+        // checks below still read exactly 0 - that is the drift fix.
+        CHECK(near(*f.roll.getInspectorValue(Param::CorrectPitch), -16.67f, 0.5f));
         for (int i = 0; i < 5; ++i) CHECK(key(juce::KeyPress::downKey, true));
         CHECK(unedited());
 

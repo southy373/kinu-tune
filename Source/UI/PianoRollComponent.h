@@ -39,7 +39,6 @@ class SelectHandler;
 class SplitHandler;
 class PitchDrawingHandler;
 class TimingHandler;
-class PitchDrawingConfirmationPanel;
 
 /**
  * Piano roll component for displaying and editing notes.
@@ -358,7 +357,6 @@ private:
   void drawGameChunksDebugOverlay(juce::Graphics &g);
   void drawGameValuesDebugOverlay(juce::Graphics &g);
   void updatePitchToolHandlesFromSelection();
-  void updatePitchDrawingConfirmationPopup();
 
   float midiToY(float midiNote) const;
   float yToMidi(float y) const;
@@ -574,7 +572,6 @@ private:
   std::unique_ptr<TimingHandler> timingHandler_;
   InteractionHandler *currentHandler_ = nullptr;
 
-  std::unique_ptr<PitchDrawingConfirmationPanel> pitchDrawingConfirmationPanel;
 
   // Scrollbars
   juce::ScrollBar horizontalScrollBar{false};

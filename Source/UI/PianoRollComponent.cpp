@@ -22,7 +22,6 @@
 #include "PianoRoll/States/SplitHandler.h"
 #include "PianoRoll/States/PitchDrawingHandler.h"
 #include "PianoRoll/States/TimingHandler.h"
-#include "PianoRoll/PitchDrawingConfirmationPanel.h"
 #include "Components/PitchPopupMenu.h"
 #include "Components/CanvasPopupMenu.h"
 #include "BinaryData.h"
@@ -500,27 +499,17 @@ PianoRollComponent::PianoRollComponent()
   };
   addAndMakeVisible(resetButton);
 
-  pitchDrawingConfirmationPanel = std::make_unique<PitchDrawingConfirmationPanel>();
-  pitchDrawingConfirmationPanel->onApply = [this]
-  {
-    if (!pitchDrawingHandler_ || !pitchDrawingHandler_->apply())
-      return;
-
-    // The preview has already been rendered. Confirmation only promotes the
-    // current transient state into undo history and persistent project state.
-    invalidateBasePitchCache();
-    if (onPitchEdited)
-      onPitchEdited();
-    if (onPitchEditCommitted)
-      onPitchEditCommitted();
-  };
-  pitchDrawingConfirmationPanel->onCancel = [this]
-  {
-    if (pitchDrawingHandler_)
-      pitchDrawingHandler_->cancel();
-  };
-  addAndMakeVisible(*pitchDrawingConfirmationPanel);
-  pitchDrawingConfirmationPanel->setVisible(false);
+  // Batch 3: freehand drawing commits on stroke release; this is the
+  // follow-up the removed confirmation panel's Apply used to run.
+  if (pitchDrawingHandler_)
+    pitchDrawingHandler_->onDrawingCommitted = [this]
+    {
+      invalidateBasePitchCache();
+      if (onPitchEdited)
+        onPitchEdited();
+      if (onPitchEditCommitted)
+        onPitchEditCommitted();
+    };
 }
 
 PianoRollComponent::~PianoRollComponent()
@@ -722,7 +711,6 @@ void PianoRollComponent::resized()
 
   updateScrollBars();
   updatePreviewButtonBounds();
-  updatePitchDrawingConfirmationPopup();
 
   // Batch 3: opening a project starts with every segment in view
   // (horizontal fit to the content, vertical fit to the segments' pitch
@@ -4165,7 +4153,6 @@ void PianoRollComponent::setEditMode(EditMode mode)
       pitchToolHandles->setHoveredHandleIndex(-1);
   }
   updatePitchToolHandlesFromSelection();
-  updatePitchDrawingConfirmationPopup();
 
   repaint();
 }
@@ -4933,27 +4920,6 @@ void PianoRollComponent::cancelPitchDrawingPreview()
 {
   if (pitchDrawingHandler_ && pitchDrawingHandler_->isActive())
     pitchDrawingHandler_->cancel();
-}
-
-void PianoRollComponent::updatePitchDrawingConfirmationPopup()
-{
-  if (!pitchDrawingConfirmationPanel)
-    return;
-
-  const bool shouldShow = editMode == EditMode::PitchDrawing && pitchDrawingHandler_ &&
-                          pitchDrawingHandler_->hasAnchors();
-  pitchDrawingConfirmationPanel->setVisible(shouldShow);
-  if (!shouldShow)
-    return;
-
-  constexpr int popupWidth = 213;
-  constexpr int popupHeight = 30;
-  const int canvasWidth = getVisibleContentWidth();
-  const int popupX = pianoKeysWidth + std::max(0, (canvasWidth - popupWidth) / 2);
-  pitchDrawingConfirmationPanel->setBounds(popupX, headerHeight + 10,
-                                     std::min(popupWidth, canvasWidth),
-                                     popupHeight);
-  pitchDrawingConfirmationPanel->toFront(false);
 }
 
 void PianoRollComponent::drawSelectionRect(juce::Graphics &g)

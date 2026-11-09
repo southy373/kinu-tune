@@ -27,8 +27,9 @@ public:
   // Batch 2 (U6): the anchor-based interaction was replaced by freehand
   // strokes - the pointer's own trajectory becomes the pitch curve. The
   // method names below predate that change and are kept because the piano
-  // roll and the confirmation panel call them: "anchors" now simply means
-  // "an unconfirmed drawing exists".
+  // roll calls them: "anchors" now simply means "a drawing session is
+  // live" (batch 3 commits each stroke on release, so a session rarely
+  // outlives its gesture).
   bool hasAnchors() const { return editedStartFrame >= 0; }
   bool isHoveringAnchor() const { return false; }
   bool isPointerOverPitchRegion() const { return pointerOverPitchRegion; }
@@ -38,6 +39,11 @@ public:
   const std::vector<float>& getPreviewMidiCurve() const { return previewMidiCurve; }
   void clearHover();
   bool apply();
+
+  // Batch 3: fired after a stroke (or an erase) has been committed by
+  // apply(), so the owner can run its post-commit follow-up (cache
+  // invalidation and the committed-edit notifications).
+  std::function<void()> onDrawingCommitted;
 
 private:
   struct OriginalNoteState
@@ -64,6 +70,11 @@ private:
   const OriginalNoteState* originalStateFor(const Note& note) const;
   void clearState(bool restoreNoteStates);
   void notifyStateChanged();
+  // Batch 3: commit the live session as an undoable action right away.
+  void commitDrawing();
+  // Batch 3: erase with no live session - removes the already-committed
+  // drawing around the click as its own undoable action.
+  bool eraseCommittedAt(float worldX, float worldY);
 
   std::vector<OriginalNoteState> originalNoteStates;
   std::vector<float> originalMidiCurve;

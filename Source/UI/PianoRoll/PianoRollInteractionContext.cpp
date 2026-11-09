@@ -101,11 +101,6 @@ void PianoRollInteractionContext::invalidateBasePitchCache()
   component.invalidateBasePitchCache();
 }
 
-void PianoRollInteractionContext::updatePitchDrawingConfirmation()
-{
-  component.updatePitchDrawingConfirmationPopup();
-}
-
 bool PianoRollInteractionContext::handleSmartControlClick(
     float worldX, float worldY, const juce::ModifierKeys &mods)
 {

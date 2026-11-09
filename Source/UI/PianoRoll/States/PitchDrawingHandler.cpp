@@ -73,6 +73,8 @@ bool PitchDrawingHandler::mouseUp(const juce::MouseEvent&, float, float)
     smoothStrokeSpan();
     updateAffectedNotePositions();
     applyPreviewToProject();
+    // Batch 3: the stroke applies immediately - no confirmation step.
+    commitDrawing();
   }
   dragMoved = false;
   owner_.repaint();
@@ -101,9 +103,11 @@ void PitchDrawingHandler::mouseDoubleClick(const juce::MouseEvent&, float worldX
 bool PitchDrawingHandler::removeAnchorAt(float worldX, float worldY)
 {
   // Freehand equivalent of removing an anchor: erase the drawn curve
-  // around the click back to the original curve.
+  // around the click back to the original curve. With immediate apply
+  // there is usually no live session, so the erase works on the last
+  // committed drawing instead.
   if (previewMidiCurve.empty() || editedStartFrame < 0)
-    return false;
+    return eraseCommittedAt(worldX, worldY);
 
   const int frame = frameFromWorldX(worldX);
   constexpr int eraseRadius = 10;
@@ -152,6 +156,72 @@ bool PitchDrawingHandler::removeAnchorAt(float worldX, float worldY)
                             ? juce::MouseCursor::CrosshairCursor
                             : juce::MouseCursor::NormalCursor);
   notifyStateChanged();
+  commitDrawing();
+  return true;
+}
+
+void PitchDrawingHandler::commitDrawing()
+{
+  // Batch 3: a finished stroke (or an erase) becomes a normal undoable
+  // action the moment it lands - there is no Apply step any more.
+  if (apply() && onDrawingCommitted)
+    onDrawingCommitted();
+}
+
+bool PitchDrawingHandler::eraseCommittedAt(float worldX, float worldY)
+{
+  juce::ignoreUnused(worldY);
+  if (!owner_.project)
+    return false;
+
+  // One-shot session: snapshot the current state, remove exactly the
+  // baked (drawn) share of the curve around the click, commit.
+  captureOriginalCurveIfNeeded();
+  if (previewMidiCurve.empty())
+    return false;
+
+  const int frame = frameFromWorldX(worldX);
+  constexpr int eraseRadius = 10;
+  const int from = std::max(0, frame - eraseRadius);
+  const int to = std::min(static_cast<int>(previewMidiCurve.size()) - 1,
+                          frame + eraseRadius);
+  bool erased = false;
+  int newStart = -1;
+  int newEnd = -1;
+  for (int f = from; f <= to; ++f)
+  {
+    const Note* note = pitchNoteAtFrame(f);
+    if (!note)
+      continue;
+    // The erase target is the note's analysed contour (its original
+    // pitch and delta): after a commit, a drawing lives in the note's
+    // own centre and regenerated base curve, not in a separable baked
+    // layer, so "back to the original curve" can only mean the sung
+    // contour. The commit's undo state preserves everything else.
+    const auto& originalDelta = note->getOriginalDeltaPitch();
+    const int local = f - note->getStartFrame();
+    float target = note->getOriginalMidiNote();
+    if (local >= 0 && local < static_cast<int>(originalDelta.size()))
+      target += originalDelta[static_cast<size_t>(local)];
+    if (std::abs(previewMidiCurve[static_cast<size_t>(f)] - target) < 1.0e-6f)
+      continue;
+    previewMidiCurve[static_cast<size_t>(f)] = target;
+    erased = true;
+    if (newStart < 0)
+      newStart = f;
+    newEnd = f;
+  }
+  if (!erased)
+  {
+    clearState(false);
+    return false;
+  }
+
+  editedStartFrame = newStart;
+  editedEndFrame = newEnd;
+  updateAffectedNotePositions();
+  applyPreviewToProject();
+  commitDrawing();
   return true;
 }
 
@@ -568,6 +638,5 @@ PitchDrawingHandler::originalStateFor(const Note& note) const
 
 void PitchDrawingHandler::notifyStateChanged()
 {
-  owner_.updatePitchDrawingConfirmation();
   owner_.repaint();
 }
