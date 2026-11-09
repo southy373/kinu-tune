@@ -311,8 +311,22 @@ inline std::optional<float> correctionShare(const Project& project, float source
     if (std::abs(deviation) < 1.0e-4f)
         return std::abs(midi - target) < 1.0e-3f ? std::optional<float>(0.0f) : std::nullopt;
     const float share = 1.0f - (midi - target) / deviation;
-    if (share < -1.0e-3f || share > 1.0f + 1.0e-3f)
+    // Batch 3: the share is bipolar. A negative share means the pitch
+    // sits further from the target than it was sung (the correction
+    // fader's negative half); -1 is a full deviation beyond the sung
+    // pitch. Anything further out is not a correction state at all.
+    if (share < -1.0f - 1.0e-3f || share > 1.0f + 1.0e-3f)
         return std::nullopt;
-    return juce::jlimit(0.0f, 1.0f, share);
+    // Snap float dust at the landmarks to the exact value: the unipolar
+    // version got this from its [0, 1] clamp (a note nudged out and
+    // back in 1-cent steps lands within 1e-4 of its sung pitch and
+    // must still read exactly 0%).
+    if (std::abs(share) < 1.0e-3f)
+        return 0.0f;
+    if (std::abs(share - 1.0f) < 1.0e-3f)
+        return 1.0f;
+    if (std::abs(share + 1.0f) < 1.0e-3f)
+        return -1.0f;
+    return juce::jlimit(-1.0f, 1.0f, share);
 }
 }

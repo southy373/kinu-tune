@@ -316,7 +316,9 @@ VariAudioInspector::VariAudioInspector()
     targetLabel.setColour(juce::Label::textColourId, APP_COLOR_TEXT_MUTED);
     content.addAndMakeVisible(targetLabel);
 
-    rows[0] = std::make_unique<ValueRow>(Param::CorrectPitch, 0.0, 100.0, 0.0, 1.0);
+    // Batch 3: Correct Pitch is bipolar - negative values push the
+    // pitch away from the target semitone (a fine-adjust control).
+    rows[0] = std::make_unique<ValueRow>(Param::CorrectPitch, -100.0, 100.0, 0.0, 1.0);
     rows[1] = std::make_unique<ValueRow>(Param::FlattenCurve, 0.0, 100.0, 0.0, 1.0);
     rows[2] = std::make_unique<ValueRow>(Param::PitchDrift, 0.0, 100.0, 0.0, 1.0);
     rows[3] = std::make_unique<ValueRow>(Param::Formant, -12.0, 12.0, 0.0, 0.1);
