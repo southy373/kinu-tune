@@ -84,6 +84,31 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+Rubber Band Library 4.0.0
+Source: https://github.com/breakfastquay/rubberband (tag v4.0.0)
+Copyright 2007-2024 Particular Programs Ltd (Chris Cannam)
+
+An audio time-stretching and pitch-shifting library, used as an optional
+pitch-shift engine (the R3 "Finer" engine) alongside PSOLA. Distributed
+under the GNU General Public License, version 2 or (at your option) any
+later version; this program elects version 3 terms for it, which the
+AGPLv3 licence of the whole expressly permits combining (AGPLv3 section
+13). The complete licence text: licenses/RubberBand-COPYING.txt, and the
+vendored copy under third_party/rubberband/. The build uses Rubber
+Band's own built-in FFT and built-in (BQ) resampler, so no FFTW,
+KissFFT, SLEEF, libsamplerate or Speex code is included.
+
+Signalsmith Stretch 1.4.0
+Source: https://github.com/Signalsmith-Audio/signalsmith-stretch (tag 1.4.0)
+Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd
+
+A header-only pitch-shifting / time-stretching library, used as an
+optional pitch-shift engine alongside PSOLA. Released under the MIT
+License: licenses/Signalsmith-Stretch-LICENSE.txt. It builds on
+Signalsmith Linear 0.6.4 (https://github.com/Signalsmith-Audio/linear,
+tag 0.6.4, also MIT: licenses/Signalsmith-Linear-LICENSE.txt), vendored
+with it under third_party/signalsmith-stretch/.
+
 ONNX Runtime 1.19.2
 Copyright (c) Microsoft Corporation
 The ONNX Runtime library bundled in the plugin (libonnxruntime.1.19.2.dylib on

@@ -69,3 +69,12 @@ pitchnet_record_sha256("onnxruntime-1.19.2-linux-x64"      "eb00c64e0041f719913c
 pitchnet_record_sha256("onnxruntime-directml-nuget-1.19.2" "91b80d881105f4fd3480eaef595378bcb4ebb3362098be2fb0f1f2976d42a699") # Microsoft.ML.OnnxRuntime.DirectML 1.19.2 from nuget.org (USE_DIRECTML=ON)
 pitchnet_record_sha256("directml-nuget-1.15.4"             "4e7cb7ddce8cf837a7a75dc029209b520ca0101470fcdf275c1f49736a3615b9") # Microsoft.AI.DirectML 1.15.4 from nuget.org (USE_BUNDLED_DIRECTML_RUNTIME)
 pitchnet_record_sha256("game-models-v1.0.3-small-onnx"     "00ba0c64115b6b874d9ea4afd3e6cf822abda2a04e52569233b0a044fd40e4e8") # GAME-1.0.3-small-onnx.zip from github.com/openvpi/GAME
+
+# Vendored source archives (batch 4). These are not downloaded by CMake -
+# the sources are committed under third_party/ - but the hashes of the
+# release archives they were taken from are recorded here like every
+# other dependency, and each vendored copy carries a VENDORED.md naming
+# the same values. Taken 2026-11-10, each downloaded twice and compared.
+pitchnet_record_sha256("rubberband-4.0.0"                  "24300f48a8014b7c863b573a9647e61b1b19b37875e2cdd92005e64c6424d266") # rubberband v4.0.0 tag archive from github.com/breakfastquay/rubberband
+pitchnet_record_sha256("signalsmith-stretch-1.4.0"         "758960fbafaa0550d17626b1eb9497d0fd10f80dad00e96590099ef6c20390e6") # signalsmith-stretch 1.4.0 tag archive from github.com/Signalsmith-Audio/signalsmith-stretch
+pitchnet_record_sha256("signalsmith-linear-0.6.4"          "eff8c9f8f2573d1f8ef52a93de32c68a70547e5c07cc1ccf62fb41795d651056") # signalsmith-linear (adaptive) 0.6.4 tag archive from github.com/Signalsmith-Audio/linear

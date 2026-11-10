@@ -46,5 +46,10 @@ tempcalude-*
 
 third_party/ASIOSDK/
 /build-xcode
-/third_party
+# Everything under third_party/ is ignored (the JUCE / ARA / r8brain
+# submodules are tracked as gitlinks, which ignore rules do not affect),
+# except the two vendored source drops committed in batch 4.
+/third_party/*
+!/third_party/rubberband
+!/third_party/signalsmith-stretch
 sign.sh
