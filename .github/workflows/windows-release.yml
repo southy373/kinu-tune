@@ -102,10 +102,10 @@ jobs:
           }
           # AI Resynthesis models, generated above; the plug-in offers the
           # engine only when the main model is in the models folder, and
-          # the opset 17 variant feeds the vocoder's DirectML session
-          # ladder. The installer copies the whole folder (see
-          # windows-installer.yml).
-          foreach ($m in "bigvgan_v2_44khz_128band.onnx", "bigvgan_v2_44khz_128band_opset17.onnx") {
+          # the ConvTranspose-free (noct) variant heads the vocoder's
+          # DirectML session ladder. The installer copies the whole
+          # folder (see windows-installer.yml).
+          foreach ($m in "bigvgan_v2_44khz_128band.onnx", "bigvgan_v2_44khz_128band_noct.onnx") {
             $modelPath = "Resources/models/$m"
             if (Test-Path $modelPath) {
               Copy-Item $modelPath "$name/models/"

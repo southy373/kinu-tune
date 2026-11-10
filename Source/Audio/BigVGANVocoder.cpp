@@ -198,16 +198,17 @@ bool BigVGANVocoder::isOnnxRuntimeAvailable()
 
 bool BigVGANVocoder::loadModel(const juce::File &modelPath)
 {
-  // The lower-opset variant ships next to the main model; a hand-placed
-  // copy is found the same way. Callers that resolve model paths through
-  // PlatformPaths pass it explicitly instead (the two-arg overload).
+  // The ConvTranspose-free variant ships next to the main model; a
+  // hand-placed copy is found the same way. Callers that resolve model
+  // paths through PlatformPaths pass it explicitly instead (the
+  // two-arg overload).
   return loadModel(
       modelPath,
-      modelPath.getSiblingFile("bigvgan_v2_44khz_128band_opset17.onnx"));
+      modelPath.getSiblingFile("bigvgan_v2_44khz_128band_noct.onnx"));
 }
 
 bool BigVGANVocoder::loadModel(const juce::File &modelPath,
-                               const juce::File &opset17ModelPath)
+                               const juce::File &noctModelPath)
 {
 #ifdef HAVE_ONNXRUNTIME
   if (!onnxEnv)
@@ -246,19 +247,19 @@ bool BigVGANVocoder::loadModel(const juce::File &modelPath,
 
   log("Loading model from: " + modelPath.getFullPathName().toStdString());
   modelFile = modelPath;
-  opset17ModelFile = (opset17ModelPath.existsAsFile() &&
-                      opset17ModelPath != modelPath)
-                         ? opset17ModelPath
-                         : juce::File{};
-  log(opset17ModelFile.existsAsFile()
-          ? "Opset 17 variant present: " +
-                opset17ModelFile.getFullPathName().toStdString()
-          : "Opset 17 variant not present; the ladder runs without it");
+  noctModelFile = (noctModelPath.existsAsFile() &&
+                   noctModelPath != modelPath)
+                      ? noctModelPath
+                      : juce::File{};
+  log(noctModelFile.existsAsFile()
+          ? "Noct variant present: " +
+                noctModelFile.getFullPathName().toStdString()
+          : "Noct variant not present; the ladder runs without it");
 
   return establishSession();
 #else
   (void)modelPath;
-  (void)opset17ModelPath;
+  (void)noctModelPath;
   log("BigVGAN: ONNX Runtime is not available; model inference is disabled");
   lastError = "ONNX Runtime is not available";
   loaded = false;
@@ -326,8 +327,9 @@ bool BigVGANVocoder::createSessionFor(const juce::File &file,
 bool BigVGANVocoder::probeCurrentSession(std::string &error)
 {
   // The smallest mel that still runs every node of the graph: BigVGAN is
-  // fully convolutional, so 16 frames exercise the same nodes (including
-  // every ConvTranspose) as a full chunk, at a fraction of the cost.
+  // fully convolutional, so 16 frames exercise the same nodes (including,
+  // in the main model, every ConvTranspose) as a full chunk, at a
+  // fraction of the cost.
   constexpr size_t kProbeFrames = 16;
   std::vector<std::vector<float>> mel(
       kProbeFrames, std::vector<float>(static_cast<size_t>(numMels)));
@@ -336,6 +338,12 @@ bool BigVGANVocoder::probeCurrentSession(std::string &error)
       mel[frame][static_cast<size_t>(m)] =
           -6.0f + 0.05f * static_cast<float>((frame * 31 + m * 7) % 97);
 
+  // inferChunkLocked's contract is that the caller holds
+  // inferenceMutex. The ladder runs before the vocoder is marked
+  // loaded, so no render could race this probe anyway, but the lock
+  // is taken so the contract holds formally as well as in practice
+  // (batch 4 review carry-over).
+  std::lock_guard<std::mutex> lock(inferenceMutex);
   try
   {
     const auto out = inferChunkLocked(mel);
@@ -365,8 +373,25 @@ bool BigVGANVocoder::establishSession()
     GraphOptimizationLevel optLevel;
   };
 
+  // Batch 4 ladder order: the ConvTranspose-free noct variant goes
+  // first on DirectML - it is the only rung that avoids the operator
+  // the provider rejected in the field (see the class comment). The
+  // main model keeps its batch 3.1 DirectML chances behind it, and
+  // the CPU rung is unchanged. Without the noct file the ladder is
+  // exactly batch 3.1's.
   std::vector<Rung> ladder;
 #ifdef USE_DIRECTML
+  if (noctModelFile.existsAsFile())
+  {
+    ladder.push_back({"DirectML + noct model (ConvTranspose-free) + full "
+                      "graph optimization",
+                      noctModelFile, true,
+                      GraphOptimizationLevel::ORT_ENABLE_ALL});
+    ladder.push_back({"DirectML + noct model (ConvTranspose-free) + basic "
+                      "graph optimization",
+                      noctModelFile, true,
+                      GraphOptimizationLevel::ORT_ENABLE_BASIC});
+  }
   ladder.push_back({"DirectML + main model (opset 20) + full graph "
                     "optimization",
                     modelFile, true, GraphOptimizationLevel::ORT_ENABLE_ALL});
@@ -374,15 +399,6 @@ bool BigVGANVocoder::establishSession()
                     "optimization",
                     modelFile, true,
                     GraphOptimizationLevel::ORT_ENABLE_BASIC});
-  if (opset17ModelFile.existsAsFile())
-  {
-    ladder.push_back({"DirectML + opset 17 model + full graph optimization",
-                      opset17ModelFile, true,
-                      GraphOptimizationLevel::ORT_ENABLE_ALL});
-    ladder.push_back({"DirectML + opset 17 model + basic graph optimization",
-                      opset17ModelFile, true,
-                      GraphOptimizationLevel::ORT_ENABLE_BASIC});
-  }
 #endif
   ladder.push_back({"CPU + main model (opset 20) + full graph optimization",
                     modelFile, false,
@@ -474,8 +490,18 @@ bool BigVGANVocoder::establishSession()
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - ladderStart)
             .count();
+    // When the DirectML provider could not be appended, this rung's
+    // session is a CPU session despite its DirectML label (see the
+    // append-failure branch above); the adopted line must say so, or
+    // the log claims a GPU configuration that never ran (batch 4
+    // review carry-over).
+    const std::string adoptedLabel =
+        (rung.directML && !directMLProviderAppended)
+            ? "CPU + " + rung.file.getFileName().toStdString() +
+                  " (DirectML provider could not be appended)"
+            : rung.label;
     log("Session ladder: adopted rung " + std::to_string(i + 1) + " (" +
-        rung.label + "); probe passed in " +
+        adoptedLabel + "); probe passed in " +
         std::to_string(elapsedMs()) + "ms, ladder total " +
         std::to_string(totalMs) + "ms");
     log("BigVGAN: ONNX model loaded successfully");
