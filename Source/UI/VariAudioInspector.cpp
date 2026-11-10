@@ -23,9 +23,10 @@ constexpr int kTargetLabelHeight = 18;
 constexpr int kValueRowHeight = 34;
 constexpr int kNumRows = 5;
 
-constexpr int kGlobalRowHeight = 26;
+// Batch 4: the global faders are ValueRows now, so the global card's
+// rows are value-row height like the segment rows below.
 constexpr int kGlobalCardHeight = kInnerPadY * 2 + kHeaderHeight + kRowGap +
-                                  kGlobalRowHeight * 3 + (kRowGap + 1) * 2;
+                                  kValueRowHeight * 3 + (kRowGap + 1) * 2;
 constexpr int kRowsBoxHeight = kNumRows * kValueRowHeight + 4;
 constexpr int kVariAudioCardHeight =
     kInnerPadY * 2 + kHeaderHeight + kRowGap + kMenuRowHeight * 2 + kRowGap +
@@ -122,6 +123,23 @@ public:
     }
 };
 
+VariAudioInspector::ValueRow::ValueRow(
+    std::function<juce::String(double)> formatter, double minimum,
+    double maximum, double neutralValue, double step)
+    : juce::Slider(juce::Slider::LinearBar, juce::Slider::NoTextBox),
+      param(Param::None),
+      defaultValue(neutralValue),
+      valueFormatter(std::move(formatter)),
+      globalInteractions(true)
+{
+    setRange(minimum, maximum, step);
+    setValue(neutralValue, juce::dontSendNotification);
+    setSliderSnapsToMousePosition(false);
+    setVelocityBasedMode(false);
+    setMouseDragSensitivity(300);
+    setScrollWheelEnabled(false);
+}
+
 VariAudioInspector::ValueRow::ValueRow(Param p, double minimum, double maximum,
                                        double defaultValue_, double step)
     : juce::Slider(juce::Slider::LinearBar, juce::Slider::NoTextBox),
@@ -150,8 +168,9 @@ void VariAudioInspector::ValueRow::paint(juce::Graphics& g)
     g.setColour(APP_COLOR_TEXT_MUTED.withMultipliedAlpha(alpha));
     g.drawText(caption, top, juce::Justification::centredLeft, true);
     g.setColour(APP_COLOR_TEXT_PRIMARY.withMultipliedAlpha(alpha));
-    g.drawText(formatValue(param, getValue()), top, juce::Justification::centredRight,
-               false);
+    g.drawText(valueFormatter ? valueFormatter(getValue())
+                              : formatValue(param, getValue()),
+               top, juce::Justification::centredRight, false);
 
     // Thin bar: bipolar values (formant) fill from the centre.
     auto bar = bounds.withSizeKeepingCentre(bounds.getWidth(), 4.0f);
@@ -182,8 +201,90 @@ juce::String VariAudioInspector::formatValue(Param param, double value)
         case Param::Volume:
             return value <= -59.9 ? juce::String::fromUTF8("-\xe2\x88\x9e dB")
                                   : (value > 0.0 ? "+" : "") + juce::String(value, 1) + " dB";
+        case Param::None:
+            return {};
     }
     return {};
+}
+
+void VariAudioInspector::ValueRow::mouseDown(const juce::MouseEvent& e)
+{
+    // The global faders' Alt+click reset (batch 2 behaviour, kept):
+    // back to neutral at once, and the click is swallowed so it never
+    // starts a drag or an absolute set. The value goes through
+    // setValue with sendNotificationSync, so the owner's onValueChange
+    // treats it exactly like a committed text entry.
+    if (globalInteractions && e.mods.isAltDown())
+    {
+        setValue(defaultValue, juce::sendNotificationSync);
+        return;
+    }
+    juce::Slider::mouseDown(e);
+}
+
+void VariAudioInspector::ValueRow::mouseDoubleClick(const juce::MouseEvent& e)
+{
+    // The global faders' double-click opens a numeric entry; the
+    // segment rows keep the slider's own double-click (return to the
+    // row's default value).
+    if (globalInteractions)
+    {
+        openNumericEntry();
+        return;
+    }
+    juce::Slider::mouseDoubleClick(e);
+}
+
+void VariAudioInspector::ValueRow::openNumericEntry()
+{
+    // A ValueRow has no text box of its own (NoTextBox is what lets it
+    // paint the caption/value/bar layout), and Slider::showTextBox()
+    // is a no-op without one - so the entry is a TextEditor in a
+    // CallOutBox anchored to the row. It shows the plain number, as
+    // the old fader text box did while editing (suffix hidden), and
+    // commits through setValue(sendNotificationSync): the same path
+    // as a committed entry in the old text box, which is what makes
+    // the owner's commit-only wiring fire exactly once.
+    auto editor = std::make_unique<juce::TextEditor>();
+    editor->setText(juce::String(getValue(), 1), false);
+    editor->setFont(AppFont::getFont(14.0f));
+    editor->setJustification(juce::Justification::centredRight);
+    editor->setColour(juce::TextEditor::backgroundColourId,
+                      juce::Colour(0xFF1D1F21u));
+    editor->setColour(juce::TextEditor::textColourId, APP_COLOR_TEXT_PRIMARY);
+    editor->setColour(juce::TextEditor::outlineColourId, kRowsBoxBorder);
+    editor->setColour(juce::TextEditor::focusedOutlineColourId, kBarFill);
+    editor->setSize(96, 28);
+    editor->selectAll();
+
+    auto* editorPtr = editor.get();
+    const auto commit = [this, editorPtr]()
+    {
+        setValue(juce::jlimit(getMinimum(), getMaximum(),
+                              editorPtr->getText().getDoubleValue()),
+                 juce::sendNotificationSync);
+    };
+    editor->onReturnKey = [commit, editorPtr]()
+    {
+        commit();
+        if (auto* box = editorPtr->findParentComponentOfClass<juce::CallOutBox>())
+            box->dismiss();
+    };
+    editor->onEscapeKey = [this, editorPtr]()
+    {
+        // Restore the unedited text first: the focus-lost commit below
+        // then applies the value the row already has, i.e. nothing.
+        editorPtr->setText(juce::String(getValue(), 1), false);
+        if (auto* box = editorPtr->findParentComponentOfClass<juce::CallOutBox>())
+            box->dismiss();
+    };
+    // Clicking away applies the typed value, as losing the old text
+    // box's edit did.
+    editor->onFocusLost = commit;
+
+    juce::CallOutBox::launchAsynchronously(std::move(editor), getScreenBounds(),
+                                           nullptr);
+    editorPtr->grabKeyboardFocus();
 }
 
 VariAudioInspector::VariAudioInspector()
@@ -201,88 +302,60 @@ VariAudioInspector::VariAudioInspector()
         content.addAndMakeVisible(*header);
     }
 
-    // Global faders (batch 3, moved from the parameter panel): styled
-    // like the sliders they were there. Commits (and only commits) reach
-    // the owner: a drag commits on drag end, while a text entry or an
-    // Alt+click reset commits through onValueChange because no drag is
-    // in progress then.
-    for (auto* label : {&globalPitchLabel, &globalFormantLabel, &globalLengthLabel})
-    {
-        label->setColour(juce::Label::textColourId, juce::Colour(0xFFE6E6E6u));
-        label->setFont(AppFont::getFont(16.0f));
-        content.addAndMakeVisible(*label);
-    }
+    // Global faders (batch 3, moved from the parameter panel; batch 4:
+    // ValueRows like the segment sliders, per the user's request that
+    // the top-left controls match the Tools faders). Commits (and only
+    // commits) reach the owner: a drag commits on drag end, while a
+    // text entry or an Alt+click reset commits through onValueChange
+    // because no drag is in progress then.
+    const auto percentText = [](double value)
+    { return juce::String(value, 1) + " %"; };
+    const auto plainText = [](double value) { return juce::String(value, 1); };
+    globalPitchRow = std::make_unique<ValueRow>(percentText, 50.0, 200.0, 100.0, 0.1);
+    globalFormantRow = std::make_unique<ValueRow>(plainText, -12.0, 12.0, 0.0, 0.1);
+    globalLengthRow = std::make_unique<ValueRow>(percentText, 50.0, 200.0, 100.0, 0.1);
 
-    const auto setupGlobalFader = [](GlobalFaderSlider& slider, double rangeMin,
-                                     double rangeMax, double neutral,
-                                     const juce::String& suffix)
-    {
-        slider.setRange(rangeMin, rangeMax, 0.1);
-        slider.setNeutralValue(neutral);
-        slider.setValue(neutral, juce::dontSendNotification);
-        slider.setNumDecimalPlacesToDisplay(1);
-        if (suffix.isNotEmpty())
-        {
-            slider.setTextValueSuffix(suffix);
-            slider.setHideSuffixWhileEditing(true);
-        }
-        slider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 64, 22);
-        slider.setColour(juce::Slider::backgroundColourId,
-                         juce::Colour(0xFF30302Eu));
-        slider.setColour(juce::Slider::trackColourId,
-                         juce::Colour(0xFF30302Eu));
-        slider.setColour(juce::Slider::textBoxBackgroundColourId,
-                         juce::Colours::transparentBlack);
-        slider.setColour(juce::Slider::textBoxOutlineColourId,
-                         juce::Colours::transparentBlack);
-        slider.setColour(juce::Slider::textBoxTextColourId,
-                         juce::Colour(0xFFE6E6E6u));
-    };
-    setupGlobalFader(globalPitchSlider, 50.0, 200.0, 100.0, " %");
-    setupGlobalFader(globalFormantSlider, -12.0, 12.0, 0.0, {});
-    setupGlobalFader(globalLengthSlider, 50.0, 200.0, 100.0, " %");
-
-    globalPitchSlider.onValueChange = [this]()
+    globalPitchRow->onValueChange = [this]()
     {
         if (!globalIsUpdating && !globalPitchDragging)
-            setGlobalPitchPercentInternal(globalPitchSlider.getValue(), true);
+            setGlobalPitchPercentInternal(globalPitchRow->getValue(), true);
     };
-    globalPitchSlider.onDragStart = [this]() { globalPitchDragging = true; };
-    globalPitchSlider.onDragEnd = [this]()
+    globalPitchRow->onDragStart = [this]() { globalPitchDragging = true; };
+    globalPitchRow->onDragEnd = [this]()
     {
         globalPitchDragging = false;
         if (!globalIsUpdating)
-            setGlobalPitchPercentInternal(globalPitchSlider.getValue(), true);
+            setGlobalPitchPercentInternal(globalPitchRow->getValue(), true);
     };
-    content.addAndMakeVisible(globalPitchSlider);
+    content.addAndMakeVisible(*globalPitchRow);
 
-    globalFormantSlider.onValueChange = [this]()
+    globalFormantRow->onValueChange = [this]()
     {
         if (!globalIsUpdating && !globalFormantDragging)
-            setGlobalFormantInternal(globalFormantSlider.getValue(), true);
+            setGlobalFormantInternal(globalFormantRow->getValue(), true);
     };
-    globalFormantSlider.onDragStart = [this]() { globalFormantDragging = true; };
-    globalFormantSlider.onDragEnd = [this]()
+    globalFormantRow->onDragStart = [this]() { globalFormantDragging = true; };
+    globalFormantRow->onDragEnd = [this]()
     {
         globalFormantDragging = false;
         if (!globalIsUpdating)
-            setGlobalFormantInternal(globalFormantSlider.getValue(), true);
+            setGlobalFormantInternal(globalFormantRow->getValue(), true);
     };
-    content.addAndMakeVisible(globalFormantSlider);
+    content.addAndMakeVisible(*globalFormantRow);
 
-    globalLengthSlider.onValueChange = [this]()
+    globalLengthRow->onValueChange = [this]()
     {
         if (!globalIsUpdating && !globalLengthDragging)
-            setGlobalLengthPercentInternal(globalLengthSlider.getValue(), true);
+            setGlobalLengthPercentInternal(globalLengthRow->getValue(), true);
     };
-    globalLengthSlider.onDragStart = [this]() { globalLengthDragging = true; };
-    globalLengthSlider.onDragEnd = [this]()
+    globalLengthRow->onDragStart = [this]() { globalLengthDragging = true; };
+    globalLengthRow->onDragEnd = [this]()
     {
         globalLengthDragging = false;
         if (!globalIsUpdating)
-            setGlobalLengthPercentInternal(globalLengthSlider.getValue(), true);
+            setGlobalLengthPercentInternal(globalLengthRow->getValue(), true);
     };
-    content.addAndMakeVisible(globalLengthSlider);
+    content.addAndMakeVisible(*globalLengthRow);
 
     for (auto* label : {&smartControlsLabel, &snapModeLabel})
     {
@@ -423,12 +496,13 @@ VariAudioInspector::~VariAudioInspector()
 void VariAudioInspector::refreshLocalisedText()
 {
     globalHeader.setText(TR("inspector.global"), juce::dontSendNotification);
-    globalPitchLabel.setText(TR("param.global_pitch_percent"), juce::dontSendNotification);
-    globalPitchSlider.setName(TR("param.global_pitch_percent"));
-    globalFormantLabel.setText(TR("param.global_formant"), juce::dontSendNotification);
-    globalFormantSlider.setName(TR("param.global_formant"));
-    globalLengthLabel.setText(TR("param.global_length_percent"), juce::dontSendNotification);
-    globalLengthSlider.setName(TR("param.global_length_percent"));
+    // The rows paint their own captions now (batch 4).
+    globalPitchRow->caption = TR("param.global_pitch_percent");
+    globalFormantRow->caption = TR("param.global_formant");
+    globalLengthRow->caption = TR("param.global_length_percent");
+    for (auto* row : {globalPitchRow.get(), globalFormantRow.get(),
+                      globalLengthRow.get()})
+        row->repaint();
 
     variAudioHeader.setText(TR("inspector.variaudio"), juce::dontSendNotification);
     smartControlsLabel.setText(TR("inspector.smart_controls"), juce::dontSendNotification);
@@ -604,11 +678,11 @@ void VariAudioInspector::updateGlobalSliders()
 
     globalIsUpdating = true;
     if (!globalPitchDragging)
-        globalPitchSlider.setValue(globalPitchPercent, juce::dontSendNotification);
+        globalPitchRow->setValue(globalPitchPercent, juce::dontSendNotification);
     if (!globalFormantDragging)
-        globalFormantSlider.setValue(globalFormantShift, juce::dontSendNotification);
+        globalFormantRow->setValue(globalFormantShift, juce::dontSendNotification);
     if (!globalLengthDragging)
-        globalLengthSlider.setValue(globalLengthPercent, juce::dontSendNotification);
+        globalLengthRow->setValue(globalLengthPercent, juce::dontSendNotification);
     globalIsUpdating = false;
 }
 
@@ -617,7 +691,7 @@ void VariAudioInspector::setGlobalPitchPercentInternal(double percent, bool noti
     const double normalized = juce::jlimit(50.0, 200.0, percent);
     const bool changed = std::abs(globalPitchPercent - normalized) > 0.0001;
     globalPitchPercent = normalized;
-    globalPitchSlider.setValue(normalized, juce::dontSendNotification);
+    globalPitchRow->setValue(normalized, juce::dontSendNotification);
 
     auto* project = getCurrentProject ? getCurrentProject() : nullptr;
     if (project != nullptr && changed)
@@ -632,7 +706,7 @@ void VariAudioInspector::setGlobalFormantInternal(double semitones, bool notify)
     const double normalized = juce::jlimit(-12.0, 12.0, semitones);
     const bool changed = std::abs(globalFormantShift - normalized) > 0.0001;
     globalFormantShift = normalized;
-    globalFormantSlider.setValue(normalized, juce::dontSendNotification);
+    globalFormantRow->setValue(normalized, juce::dontSendNotification);
 
     auto* project = getCurrentProject ? getCurrentProject() : nullptr;
     if (project != nullptr && changed)
@@ -651,7 +725,7 @@ void VariAudioInspector::setGlobalLengthPercentInternal(double percent, bool not
     const double normalized = juce::jlimit(50.0, 200.0, percent);
     const bool changed = std::abs(globalLengthPercent - normalized) > 0.0001;
     globalLengthPercent = normalized;
-    globalLengthSlider.setValue(normalized, juce::dontSendNotification);
+    globalLengthRow->setValue(normalized, juce::dontSendNotification);
 
     if (notify && changed && onGlobalLengthPercentChanged)
         onGlobalLengthPercentChanged(normalized);
@@ -714,17 +788,11 @@ void VariAudioInspector::layoutContent(int width)
         globalHeader.setBounds(card.removeFromTop(kHeaderHeight));
         card.removeFromTop(kRowGap);
 
-        auto pitchRow = card.removeFromTop(kGlobalRowHeight);
-        globalPitchLabel.setBounds(pitchRow.removeFromLeft(110));
-        globalPitchSlider.setBounds(pitchRow.reduced(0, 2));
+        globalPitchRow->setBounds(card.removeFromTop(kValueRowHeight));
         card.removeFromTop(kRowGap + 1);
-        auto formantRow = card.removeFromTop(kGlobalRowHeight);
-        globalFormantLabel.setBounds(formantRow.removeFromLeft(110));
-        globalFormantSlider.setBounds(formantRow.reduced(0, 2));
+        globalFormantRow->setBounds(card.removeFromTop(kValueRowHeight));
         card.removeFromTop(kRowGap + 1);
-        auto lengthRow = card.removeFromTop(kGlobalRowHeight);
-        globalLengthLabel.setBounds(lengthRow.removeFromLeft(110));
-        globalLengthSlider.setBounds(lengthRow.reduced(0, 2));
+        globalLengthRow->setBounds(card.removeFromTop(kValueRowHeight));
     }
     area.removeFromTop(kPadY);
 

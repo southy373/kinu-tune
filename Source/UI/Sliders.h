@@ -17,44 +17,9 @@ private:
     bool hideSuffixWhileEditing = false;
 };
 
-/**
- * Batch 2: a SliderBox for the project-wide faders (global pitch %,
- * global formant, global length %, and the insert prototype's two
- * faders), with the two interactions the user asked for on every one of
- * them:
- *  - double-click opens the numeric text editor (showTextBox);
- *  - Alt+click resets to the neutral value (100% / no correction) and
- *    is swallowed, so it never starts a drag or an absolute set.
- * The reset goes through setValue with sendNotificationSync, so the
- * owner's onValueChange treats it exactly like a committed text entry.
- */
-class GlobalFaderSlider : public SliderBox
-{
-public:
-    explicit GlobalFaderSlider(juce::String helpText = {})
-        : SliderBox(std::move(helpText))
-    {
-    }
-
-    void setNeutralValue(double neutral) { neutralValue = neutral; }
-    double getNeutralValue() const { return neutralValue; }
-
-    void mouseDown(const juce::MouseEvent &e) override
-    {
-        if (e.mods.isAltDown())
-        {
-            setValue(neutralValue, juce::sendNotificationSync);
-            return;
-        }
-        SliderBox::mouseDown(e);
-    }
-
-    void mouseDoubleClick(const juce::MouseEvent &e) override
-    {
-        juce::ignoreUnused(e);
-        showTextBox();
-    }
-
-private:
-    double neutralValue = 0.0;
-};
+// The batch 2 GlobalFaderSlider that used to live here is gone (batch
+// 4): its only remaining users, the inspector's three project-wide
+// faders, are VariAudioInspector::ValueRow components now, and the
+// double-click numeric entry / Alt+click reset interactions moved
+// into that class with them. The insert prototype's two faders, its
+// other user, were removed in batch 3.

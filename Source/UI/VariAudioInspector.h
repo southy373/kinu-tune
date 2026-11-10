@@ -25,8 +25,10 @@ class VariAudioInspector : public juce::Component, private juce::Timer
 public:
     static constexpr int preferredWidth = 240;
 
-    // Slider order matches PianoRollComponent::InspectorParam.
-    enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume };
+    // Slider order matches PianoRollComponent::InspectorParam. None is
+    // the global faders' marker: they are ValueRows too (batch 4) but
+    // belong to no segment parameter.
+    enum class Param { CorrectPitch, FlattenCurve, PitchDrift, Formant, Volume, None };
     // VariAudio Pitch Snap Mode: Absolute / Relative / Off.
     enum class SnapMode { Absolute, Relative, Off };
 
@@ -89,15 +91,29 @@ private:
     };
 
     // Cubase-style value row: caption left, value right, thin bar below.
+    // One component for every fader in this column since batch 4: the
+    // five segment rows format through their Param, the three global
+    // rows through an explicit formatter and additionally carry the
+    // global faders' own interactions (double-click numeric entry,
+    // Alt+click reset to neutral).
     class ValueRow : public juce::Slider
     {
     public:
         ValueRow(Param param, double minimum, double maximum, double defaultValue,
                  double step);
+        ValueRow(std::function<juce::String(double)> formatter, double minimum,
+                 double maximum, double neutralValue, double step);
         void paint(juce::Graphics& g) override;
+        void mouseDown(const juce::MouseEvent& e) override;
+        void mouseDoubleClick(const juce::MouseEvent& e) override;
         juce::String caption;
         const Param param;
         const double defaultValue;
+        std::function<juce::String(double)> valueFormatter;
+        bool globalInteractions = false;
+
+    private:
+        void openNumericEntry();
     };
 
     void timerCallback() override;
@@ -122,13 +138,13 @@ private:
     Content content{*this};
 
     // Global card (batch 3): the project-wide faders, above everything.
+    // Batch 4: the same ValueRow component as the segment sliders
+    // below, so look and operation match; they keep their commit-only
+    // reporting and their own double-click / Alt+click interactions.
     juce::Label globalHeader;
-    juce::Label globalPitchLabel;
-    GlobalFaderSlider globalPitchSlider { "Global Pitch %" };
-    juce::Label globalFormantLabel;
-    GlobalFaderSlider globalFormantSlider { "Global Formant" };
-    juce::Label globalLengthLabel;
-    GlobalFaderSlider globalLengthSlider { "Global Length %" };
+    std::unique_ptr<ValueRow> globalPitchRow;
+    std::unique_ptr<ValueRow> globalFormantRow;
+    std::unique_ptr<ValueRow> globalLengthRow;
     double globalPitchPercent = 100.0;
     double globalFormantShift = 0.0;
     double globalLengthPercent = 100.0;
