@@ -101,7 +101,11 @@ public:
   // View settings
   bool getOverviewVisible() const { return overviewVisible; }
   void setOverviewVisible(bool visible) { overviewVisible = visible; }
-  // ARA editor: Track mode (whole track) vs Clip mode (selected clip's source).
+  // ARA editor: Track mode (whole track) vs Clip mode (selected clip's
+  // source). Batch 4: the editor is fixed to Clip mode - MainComponent
+  // no longer applies this setting and the default is Clip. The value
+  // is still loaded/saved so the dormant Track paths and older settings
+  // files keep working if the mode is ever revived.
   bool getTrackViewMode() const { return trackViewMode; }
   void setTrackViewMode(bool track) { trackViewMode = track; }
   // Track list: colour rows with the DAW's track colour, or the default.
@@ -156,8 +160,10 @@ private:
   int windowWidth = 1000;
   int windowHeight = 628;
   bool overviewVisible = false;
-  // ARA starts in Track mode unless the user saved a different preference.
-  bool trackViewMode = true;
+  // Batch 4: Clip mode is the default (and the only mode the editor
+  // uses; see getTrackViewMode). Before batch 4 this defaulted to
+  // Track, whose initial fit caused the disappearing-segments bug.
+  bool trackViewMode = false;
   bool useDawTrackColour = true;
   bool showDeltaPitch = true;
   bool showBasePitch = false;

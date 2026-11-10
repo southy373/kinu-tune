@@ -2838,15 +2838,21 @@ void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
 
   if (scrollBar == &horizontalScrollBar)
   {
-    scrollX = clampScrollX(newRangeStart);
-    coordMapper->setScrollX(scrollX);
-    lastViewStateSyncSource = "scrollBarMoved(horizontal)";
+    // Batch 4 (candidate C): during programmatic range setup the
+    // reported value is JUCE's clamping echo, not a user scroll; the
+    // guarded setters own the state, so only the observers below run.
+    if (!syncingScrollBars)
+    {
+      scrollX = clampScrollX(newRangeStart);
+      coordMapper->setScrollX(scrollX);
+      lastViewStateSyncSource = "scrollBarMoved(horizontal)";
+    }
 
     // Notify scroll changed for synchronization
     if (onScrollChanged)
       onScrollChanged(scrollX);
   }
-  else if (scrollBar == &verticalScrollBar)
+  else if (scrollBar == &verticalScrollBar && !syncingScrollBars)
   {
     // The scrollbar's range start is not guaranteed to be a valid scroll
     // position: JUCE clamps the visible range into the total range, which
@@ -5218,6 +5224,12 @@ void PianoRollComponent::updateScrollBars()
     scrollY = juce::jlimit(0.0, maxScrollY, scrollY);
     coordMapper->setScrollY(scrollY);
 
+    // Batch 4 (diagnosis candidate C): JUCE may synchronously call
+    // scrollBarMoved back from these setters with a value it clamped
+    // into the new range. That value is an echo of the programmatic
+    // setup, not a user scroll, so scrollBarMoved's state writes are
+    // suppressed for the duration (see syncingScrollBars).
+    syncingScrollBars = true;
     horizontalScrollBar.setRangeLimits(
         getTimelineStart() * pixelsPerSecond,
         std::max(getTimelineStart() * pixelsPerSecond +
@@ -5227,6 +5239,7 @@ void PianoRollComponent::updateScrollBars()
 
     verticalScrollBar.setRangeLimits(0, totalHeight);
     verticalScrollBar.setCurrentRange(scrollY, visibleHeight);
+    syncingScrollBars = false;
   }
 }
 

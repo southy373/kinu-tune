@@ -199,6 +199,11 @@ public:
   // restored scroll parked far past the content), refit the view to the
   // content and return true.
   bool recoverIfNoContentVisible(const char *reason);
+  // Batch 4 (diagnosis candidate E): a restored viewport supersedes
+  // the one-time initial fit. MainComponent::restoreViewportState
+  // calls this after applying a stored state, so a later resize()
+  // cannot run the fit and overwrite the restored view.
+  void suppressInitialFit() { initialFitDone = true; }
   // Batch 3.2: append one diagnostics line with both view-state stores
   // and the bound project's summary (see ViewStateDiagnostics).
   void logViewStateDiagnostics(const juce::String &tag) const;
@@ -413,6 +418,12 @@ private:
   // from the CoordinateMapper (what paint() will actually draw).
   int countNotesInVisibleRange() const;
   const char *lastViewStateSyncSource = "none";
+  // Batch 4 (diagnosis candidate C): true while updateScrollBars()
+  // programs the scrollbar ranges. JUCE can answer such a call by
+  // synchronously invoking scrollBarMoved with its own clamped value;
+  // while this is set, scrollBarMoved must not write that value back
+  // into the view state (the guarded setters own it).
+  bool syncingScrollBars = false;
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
   // Absolute snap: moves each selected segment onto the next semitone (or
   // scale tone) in the given direction.

@@ -1209,6 +1209,11 @@ void MainComponent::restoreViewportState(
   // blank roll.
   pianoRoll.recoverIfNoContentVisible("restoreViewportState");
 
+  // Batch 4 (diagnosis candidate E): a stored viewport was applied, so
+  // the one-time initial fit must not run on a later resize and
+  // overwrite it with a fit of the whole content.
+  pianoRoll.suppressInitialFit();
+
   pianoRoll.logViewStateDiagnostics("viewport-restore");
   toolbar.setZoom(pianoRoll.getPixelsPerSecond());
   pianoRollView.refreshOverview();
@@ -3661,16 +3666,23 @@ void MainComponent::triggerResynthesis()
 }
 
 void MainComponent::setTrackViewModeAvailable(bool available) {
-  toolbar.setTrackViewAvailable(available);
+  // Batch 4: the editor is fixed to Clip mode. Track mode's initial
+  // fit was the root cause of the disappearing-segments bug (diagnosis
+  // note 2026-11-10-viewstate-log-diagnosis.md): this function runs at
+  // every ARA editor creation and used to re-apply the saved
+  // trackViewMode - which defaulted to Track - so every open fitted
+  // the view to the whole host timeline and parked it far before the
+  // clip's content. The toggle is therefore never shown and the saved
+  // setting is no longer applied. The Track code paths stay in place
+  // below this point, dormant.
+  toolbar.setTrackViewAvailable(false);
   // The left side panel is ARA only, like the Clip / Track toggle.
   toolbar.setLeftPanelAvailable(available);
   if (!available)
     workspace.showLeftPanel(false);
   pianoRollView.setTrackViewModeAvailable(available);
-  const bool track = available && settingsManager != nullptr &&
-                     settingsManager->getTrackViewMode();
-  pianoRollView.setTrackViewMode(track);
-  toolbar.setTrackViewMode(track);
+  pianoRollView.setTrackViewMode(false);
+  toolbar.setTrackViewMode(false);
 }
 
 void MainComponent::updateRegionPreviews(MainViewRegionPreviewList previews) {

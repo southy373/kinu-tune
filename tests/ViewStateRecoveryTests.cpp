@@ -8,6 +8,7 @@
 // inside the visible range, and - in the paint scenario - on pixels
 // really being drawn where a note should be.
 #include "../Source/Audio/EditorController.h"
+#include "../Source/UI/Main/SettingsManager.h"
 #include "../Source/UI/MainComponent.h"
 #include "../Source/UI/PianoRollComponent.h"
 #include "../Source/Undo/PitchUndoManager.h"
@@ -433,6 +434,92 @@ int main()
     roll.setScrollX(1450.0);
     drainMessages();
     CHECK(visibleNotes(roll) == 1);
+  }
+
+  // --- I (batch 4): the view-mode default is Clip. The editor is
+  // fixed to Clip mode (Track mode's initial fit caused the
+  // disappearing-segments bug); a stale Track default here would
+  // re-arm the dormant path's assumptions. This constructs a
+  // SettingsManager, whose constructor loads any saved config, so it
+  // assumes a machine without a saved trackViewMode (true for CI and
+  // fresh installs).
+  {
+    SettingsManager settings;
+    CHECK(!settings.getTrackViewMode());
+  }
+
+  // --- J (batch 4, diagnosis candidate E): reopening with a stored
+  // viewport must not be overwritten by the one-time initial fit.
+  // Binding a NEW project re-arms the fit; restoring a distinctive
+  // viewport and then resizing must leave the restored values alone.
+  {
+    auto makeWideProject = [](Project &proj) {
+      auto &audio = proj.getAudioData();
+      audio.sampleRate = SAMPLE_RATE;
+      const int frames = 600;
+      audio.f0.assign(frames, 220.0f);
+      audio.basePitch.assign(frames, 57.0f);
+      audio.deltaPitch.assign(frames, 0.0f);
+      audio.waveform.setSize(1, frames * HOP_SIZE);
+      proj.addNote(Note(100, 160, 60));
+      proj.addNote(Note(300, 360, 64));
+    };
+
+    EditorController controllerB(false);
+    makeWideProject(*controllerB.getProject());
+    PitchUndoManager historyB(100);
+    MainComponent mcB(false);
+    MainComponentTestAccess::wireController(mcB, controllerB, historyB);
+    auto &rollB = MainComponentTestAccess::roll(mcB);
+    mcB.setSize(1100, 650);
+    drainMessages();
+    if (rollB.getWidth() <= 0 || rollB.getHeight() <= 0)
+      rollB.setSize(1000, 560);
+    drainMessages();
+
+    // A distinctive restored viewport: 300 px/s (the fit of ~7 s of
+    // content into this width would land near 150 px/s) scrolled so
+    // the second note (frames 300..360, about 3.5..4.2 s, i.e.
+    // 1044..1254 px at 300 px/s) is in view. 800 px of scroll stays
+    // inside the scroll clamp for any plausible roll width here.
+    MainViewViewportState restored;
+    restored.valid = true;
+    restored.pixelsPerSecond = 300.0f;
+    restored.pixelsPerSemitone = rollB.getPixelsPerSemitone();
+    restored.scrollX = 800.0;
+    restored.scrollY = rollB.getScrollY();
+    mcB.restoreViewportState(restored);
+    drainMessages();
+    CHECK(std::abs(rollB.getPixelsPerSecond() - 300.0f) < 0.5f);
+    CHECK(std::abs(rollB.getScrollX() - 800.0) < 1.0);
+    CHECK(visibleNotes(rollB) >= 1);
+
+    // The resize that follows a reopen must not run the fit over the
+    // restored viewport.
+    rollB.setSize(rollB.getWidth() + 37, rollB.getHeight());
+    drainMessages();
+    CHECK(std::abs(rollB.getPixelsPerSecond() - 300.0f) < 0.5f);
+    CHECK(std::abs(rollB.getScrollX() - 800.0) < 1.0);
+    CHECK(storesAgree(rollB));
+    rollB.setProject(nullptr);
+
+    // Control: the same rebind WITHOUT a restore still gets the
+    // initial fit on resize (the suppression is specific to the
+    // restore path, not a disabled fit).
+    EditorController controllerC(false);
+    makeWideProject(*controllerC.getProject());
+    PitchUndoManager historyC(100);
+    MainComponent mcC(false);
+    MainComponentTestAccess::wireController(mcC, controllerC, historyC);
+    auto &rollC = MainComponentTestAccess::roll(mcC);
+    mcC.setSize(1100, 650);
+    drainMessages();
+    if (rollC.getWidth() <= 0 || rollC.getHeight() <= 0)
+      rollC.setSize(1000, 560);
+    drainMessages();
+    CHECK(visibleNotes(rollC) == 2);
+    CHECK(rollC.getPixelsPerSecond() < 250.0f); // fitted, not 300
+    rollC.setProject(nullptr);
   }
 
   std::cout << "ViewStateRecoveryTests passed" << std::endl;
