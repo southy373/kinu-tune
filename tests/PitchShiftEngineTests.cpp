@@ -18,6 +18,12 @@
 #include <iostream>
 #include <vector>
 
+// MSVC does not declare M_PI without _USE_MATH_DEFINES (see the note in
+// PsolaSynthesizer.cpp); define it the same way BasePitchCurve.h does.
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace
 {
 
