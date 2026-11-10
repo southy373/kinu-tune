@@ -13,6 +13,7 @@
 #include "../Source/Audio/Synthesis/SignalsmithStretchSynthesizer.h"
 #include "TestAssert.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <vector>
@@ -49,15 +50,21 @@ double middleRms(const std::vector<float> &samples)
 }
 
 // Fundamental estimate by normalised autocorrelation over the steady
-// middle, searched over 50..500 Hz.
+// middle, searched over 50..500 Hz. A periodic signal also correlates
+// near-perfectly at multiples of its period, and which multiple
+// scores highest is a near-tie that rendering noise decides - a
+// plain argmax reported 55 Hz (4x the period) for the 220 Hz render
+// on one build after passing on another. The fundamental is the
+// SHORTEST lag that correlates essentially as well as the best lag.
 double estimateF0(const std::vector<float> &samples)
 {
   const int begin = static_cast<int>(samples.size()) / 4;
   const int length = static_cast<int>(samples.size()) / 2;
   const int minLag = kSampleRate / 500;
   const int maxLag = kSampleRate / 50;
+  std::vector<double> scores(static_cast<size_t>(maxLag - minLag + 1),
+                             -1.0);
   double best = -1.0;
-  int bestLag = minLag;
   for (int lag = minLag; lag <= maxLag; ++lag)
   {
     double dot = 0.0, a = 0.0, b = 0.0;
@@ -70,13 +77,13 @@ double estimateF0(const std::vector<float> &samples)
       b += y * y;
     }
     const double score = dot / std::sqrt(std::max(1e-12, a * b));
-    if (score > best)
-    {
-      best = score;
-      bestLag = lag;
-    }
+    scores[static_cast<size_t>(lag - minLag)] = score;
+    best = std::max(best, score);
   }
-  return static_cast<double>(kSampleRate) / bestLag;
+  for (int lag = minLag; lag <= maxLag; ++lag)
+    if (scores[static_cast<size_t>(lag - minLag)] >= best - 0.01)
+      return static_cast<double>(kSampleRate) / lag;
+  return 0.0;
 }
 
 // A request whose slice starts 8 frames before the render range, like
