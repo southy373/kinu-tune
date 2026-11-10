@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../JuceHeader.h"
+#include "../Audio/Synthesis/PitchShiftEngine.h"
 #include "../Audio/SynthesisEngineType.h"
 #include "../Models/Note.h"
 #include "../Models/Project.h"
@@ -39,6 +40,12 @@ public:
     void setSelectedNote(Note* note);
     void setSynthesisEngine(SynthesisEngineType type);
     SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
+    // Batch 4: which algorithm performs the pitch-shift stage. A
+    // separate choice from the synthesis engine above (that one picks
+    // what rebuilds the shifted audio); shown as its own radio group
+    // under a "Pitch shift" caption in the same Rendering card.
+    void setPitchShiftEngine(PitchShiftEngine engine);
+    PitchShiftEngine getPitchShiftEngine() const { return pitchShiftEngine; }
     // VariAudio Changes Bypass (Rendering card, under the engine radios):
     // while on, playback is the pristine original and resynthesis is
     // suspended. Session-only - the owner (MainComponent) applies it to the
@@ -94,6 +101,7 @@ public:
     std::function<void(bool)> onTimelineSnapCycleChanged;
     std::function<void(double)> onUiBrightnessChanged;
     std::function<void(SynthesisEngineType)> onSynthesisEngineChanged;
+    std::function<void(PitchShiftEngine)> onPitchShiftEngineChanged;
     std::function<void(int)> onRenderDeviceChanged;
     // Batch 2 (U7): the project-wide faders. Pitch % and formant are
     // render settings: the panel writes them to the project and these
@@ -117,6 +125,8 @@ private:
     void setPitchReferenceInternal(int hz, bool notify);
     void refreshModeToggles();
     void refreshSynthesisToggles();
+    void refreshPitchShiftToggles();
+    void setPitchShiftEngineInternal(PitchShiftEngine engine, bool notify);
     void refreshVocoderToggleAvailability();
     void refreshRenderDeviceRow();
     void showRenderDeviceMenu();
@@ -166,6 +176,17 @@ private:
     RadioButton vocoderEngineToggle;
     RadioButton psolaEngineToggle;
 
+    // Batch 4: the pitch-shift stage's algorithm, under its own
+    // caption below the engine radios. The button texts are the
+    // algorithms' proper names and are deliberately not localised;
+    // only the caption above them is. PSOLA appears in both groups on
+    // purpose: up there it names the classic rendering path, here it
+    // names the pitch-shift algorithm every path starts from.
+    juce::Label pitchShiftLabel;
+    RadioButton psolaShiftToggle;
+    RadioButton rubberBandShiftToggle;
+    RadioButton signalsmithShiftToggle;
+
     juce::Label renderDeviceLabel;
     ComboSelectionButton renderDeviceButton;
 
@@ -204,6 +225,7 @@ private:
     bool timelineSnapCycle = false;
     double uiBrightnessPercent = 100.0;
     SynthesisEngineType synthesisEngine = defaultSynthesisEngineType();
+    PitchShiftEngine pitchShiftEngine = PitchShiftEngine::Psola;
     AiResynthesisSupport aiSupport = AiResynthesisSupport::Accelerated;
 
     juce::StringArray renderDeviceNames;

@@ -142,6 +142,7 @@
   "param.device": "장치",
   "param.drag_snap": "드래그 스냅",
   "param.engine_psola": "클래식",
+  "param.pitch_shift": "피치 시프트",
   "param.engine_vocoder": "AI 리신서시스",
   "param.formant": "포먼트",
   "param.formant_shift": "포먼트 시프트 (st)",

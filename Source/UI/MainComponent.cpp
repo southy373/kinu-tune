@@ -375,6 +375,8 @@ MainComponent::MainComponent(bool enableAudioDevice)
         settingsManager->getPitchDetectorType());
     editorController->setSynthesisEngineType(
         settingsManager->getSynthesisEngineType());
+    editorController->setPitchShiftEngine(
+        settingsManager->getPitchShiftEngine());
     editorController->setDeviceConfig(settingsManager->getDevice(),
                                       settingsManager->getGPUDeviceId());
     editorController->reloadInferenceModels(false);
@@ -597,6 +599,17 @@ MainComponent::MainComponent(bool enableAudioDevice)
       editorController->setSynthesisEngineType(type);
     // Otherwise the switch is only a setting: the audio already rendered by
     // the previous engine would stay until the user happened to edit again.
+    rerenderEditedNotes();
+  };
+  parameterPanel.setPitchShiftEngine(settingsManager->getPitchShiftEngine());
+  parameterPanel.onPitchShiftEngineChanged = [this](PitchShiftEngine engine)
+  {
+    settingsManager->setPitchShiftEngine(engine);
+    settingsManager->saveConfig();
+    if (editorController)
+      editorController->setPitchShiftEngine(engine);
+    // Same rule as the synthesis engine switch: re-render everything
+    // with the newly chosen pitch-shift algorithm.
     rerenderEditedNotes();
   };
   // After the callback above is wired: where AI Resynthesis cannot run, this
@@ -1022,6 +1035,8 @@ void MainComponent::bindBackendController(EditorController *controller)
           settingsManager->getPitchDetectorType());
       editorController->setSynthesisEngineType(
           settingsManager->getSynthesisEngineType());
+      editorController->setPitchShiftEngine(
+          settingsManager->getPitchShiftEngine());
       editorController->setDeviceConfig(settingsManager->getDevice(),
                                         settingsManager->getGPUDeviceId());
       if (!editorController->isSelectedPitchDetectorLoaded())

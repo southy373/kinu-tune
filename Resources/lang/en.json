@@ -185,6 +185,7 @@
   "param.device": "Device",
   "param.drag_snap": "Drag Snap",
   "param.engine_psola": "Classic",
+  "param.pitch_shift": "Pitch shift",
   "param.engine_vocoder": "AI Resynthesis",
   "param.formant": "Formant",
   "param.formant_shift": "Formant Shift (st)",

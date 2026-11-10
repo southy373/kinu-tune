@@ -142,6 +142,7 @@
   "param.device": "Dispositivo",
   "param.drag_snap": "Ajuste al arrastrar",
   "param.engine_psola": "Clásico",
+  "param.pitch_shift": "Desplazamiento de tono",
   "param.engine_vocoder": "Resíntesis con IA",
   "param.formant": "Formante",
   "param.formant_shift": "Cambio de formante (st)",

@@ -142,6 +142,7 @@
   "param.device": "设备",
   "param.drag_snap": "拖动吸附",
   "param.engine_psola": "经典",
+  "param.pitch_shift": "音高移位",
   "param.engine_vocoder": "AI 重合成",
   "param.formant": "共振峰",
   "param.formant_shift": "共振峰偏移 (半音)",

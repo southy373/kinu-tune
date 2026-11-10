@@ -33,8 +33,14 @@ constexpr int kControlRowHeight = 26;       // label + control rows
 constexpr int kBrightnessRowHeight = 28;
 constexpr int kLanguageRowHeight = 26;          // language selector row
 
+// Batch 4: the pitch-shift group inside the Rendering card - a small
+// caption plus three radio rows stacked under the engine radios.
+constexpr int kPitchShiftLabelHeight = 18;
+
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kRowGap +
+    kPitchShiftLabelHeight + kRowGap +
+    (kRadioRowHeight + kRowGap) * 3 +
     kRenderStatusRowHeight + kInnerPadY;
 
 // The inference device row is optional: it adds itself, leading gap included,
@@ -276,12 +282,25 @@ ParameterPanel::ParameterPanel()
 
     for (auto* radio : { &chromaticToggle, &scaleToggle,
                          &beatsTimelineToggle, &timeTimelineToggle,
-                         &vocoderEngineToggle, &psolaEngineToggle })
+                         &vocoderEngineToggle, &psolaEngineToggle,
+                         &psolaShiftToggle, &rubberBandShiftToggle,
+                         &signalsmithShiftToggle })
     {
         addAndMakeVisible(radio);
         radio->setClickingTogglesState(true);
         radio->addListener(this);
     }
+
+    // The pitch-shift caption: same grey as the other small labels in
+    // the card, smaller than a card title so the group reads as part of
+    // Rendering rather than as a fifth card.
+    addAndMakeVisible(pitchShiftLabel);
+    pitchShiftLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF9B9B9Bu));
+    pitchShiftLabel.setFont(AppFont::getBoldFont(13.0f));
+    psolaShiftToggle.setButtonText("PSOLA");
+    rubberBandShiftToggle.setButtonText("Rubber Band");
+    signalsmithShiftToggle.setButtonText("Signalsmith");
+    refreshPitchShiftToggles();
 
     // The button text stays plain language; the algorithm names live here, so
     // they are discoverable without putting "PC-NSF-HiFiGAN" in a 55px label.
@@ -534,6 +553,17 @@ void ParameterPanel::resized()
     vocoderEngineToggle.setBounds(vocoderArea);
     psolaEngineToggle.setBounds(engineRow);
 
+    // Batch 4: the pitch-shift group, stacked full-width under its
+    // caption so the three algorithm names never have to share a row.
+    bounds.removeFromTop(kRowGap);
+    pitchShiftLabel.setBounds(bounds.removeFromTop(kPitchShiftLabelHeight));
+    bounds.removeFromTop(kRowGap);
+    psolaShiftToggle.setBounds(bounds.removeFromTop(kRadioRowHeight));
+    bounds.removeFromTop(kRowGap);
+    rubberBandShiftToggle.setBounds(bounds.removeFromTop(kRadioRowHeight));
+    bounds.removeFromTop(kRowGap);
+    signalsmithShiftToggle.setBounds(bounds.removeFromTop(kRadioRowHeight));
+
     bounds.removeFromTop(kRowGap);
     renderStatusLabel.setBounds(bounds.removeFromTop(kRenderStatusRowHeight));
 
@@ -765,6 +795,27 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         return;
     }
 
+    if (button == &psolaShiftToggle || button == &rubberBandShiftToggle ||
+        button == &signalsmithShiftToggle)
+    {
+        auto picked = pitchShiftEngine;
+        if (button == &psolaShiftToggle && psolaShiftToggle.getToggleState())
+            picked = PitchShiftEngine::Psola;
+        else if (button == &rubberBandShiftToggle &&
+                 rubberBandShiftToggle.getToggleState())
+            picked = PitchShiftEngine::RubberBand;
+        else if (button == &signalsmithShiftToggle &&
+                 signalsmithShiftToggle.getToggleState())
+            picked = PitchShiftEngine::SignalsmithStretch;
+
+        // Same rule as the engine group: never leave it unselected.
+        if (picked != pitchShiftEngine)
+            setPitchShiftEngineInternal(picked, true);
+        else
+            refreshPitchShiftToggles();
+        return;
+    }
+
     if (button == &snapToSemitonesToggle)
     {
         setSnapToSemitonesInternal(snapToSemitonesToggle.getToggleState(), true);
@@ -833,6 +884,10 @@ void ParameterPanel::refreshLocalisedText()
     psolaEngineToggle.setButtonText(TR("param.engine_psola"));
     refreshVocoderToggleAvailability();
     psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
+
+    // Only the group's caption is localised; the three algorithm names
+    // are proper nouns and stay as they are in every language.
+    pitchShiftLabel.setText(TR("param.pitch_shift"), juce::dontSendNotification);
 
     renderDeviceLabel.setText(TR("param.device"), juce::dontSendNotification);
     refreshRenderStatusText();
@@ -1068,6 +1123,33 @@ void ParameterPanel::refreshSynthesisToggles()
     psolaEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::Psola,
                                      juce::dontSendNotification);
     refreshRenderDeviceRow();
+}
+
+void ParameterPanel::setPitchShiftEngine(PitchShiftEngine engine)
+{
+    setPitchShiftEngineInternal(engine, false);
+}
+
+void ParameterPanel::setPitchShiftEngineInternal(PitchShiftEngine engine,
+                                                 bool notify)
+{
+    pitchShiftEngine = engine;
+    refreshPitchShiftToggles();
+
+    if (notify && onPitchShiftEngineChanged)
+        onPitchShiftEngineChanged(pitchShiftEngine);
+}
+
+void ParameterPanel::refreshPitchShiftToggles()
+{
+    psolaShiftToggle.setToggleState(pitchShiftEngine == PitchShiftEngine::Psola,
+                                    juce::dontSendNotification);
+    rubberBandShiftToggle.setToggleState(
+        pitchShiftEngine == PitchShiftEngine::RubberBand,
+        juce::dontSendNotification);
+    signalsmithShiftToggle.setToggleState(
+        pitchShiftEngine == PitchShiftEngine::SignalsmithStretch,
+        juce::dontSendNotification);
 }
 
 void ParameterPanel::setAiResynthesisSupport(AiResynthesisSupport support)

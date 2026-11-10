@@ -185,6 +185,7 @@
   "param.device": "デバイス",
   "param.drag_snap": "ドラッグスナップ",
   "param.engine_psola": "クラシック",
+  "param.pitch_shift": "ピッチシフト",
   "param.engine_vocoder": "AI リシンセシス",
   "param.formant": "フォルマント",
   "param.formant_shift": "フォルマントシフト (st)",
