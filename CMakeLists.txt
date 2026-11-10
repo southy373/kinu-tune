@@ -259,13 +259,22 @@ option(PITCHNET_ARA_DIAGNOSTICS "Log ARA model-graph and render diagnostics" OFF
 # Kinu Tune is a modified version of PitchNet (Session Loops), itself derived
 # from HachiTune. It ships under its own vendor identity so it installs next to
 # PitchNet instead of replacing it.
-set(PITCHNET_COMPANY_NAME "Keinoaza")
-set(PITCHNET_MANUFACTURER_CODE Kein)
+#
+# Batch 4: the vendor identity is per product. FlexaTune carries no
+# Keinoaza identity of its own any more (company "FlexaTune",
+# manufacturer code Flxa, bundle id com.flexatune.flexatune); the
+# plug-in has never been used in a real project, so the identity
+# change breaks no saved session. Kinu Tune keeps its existing
+# identity untouched. The copyright string below is a licence notice
+# and deliberately still names every copyright holder, Keinoaza
+# included.
 set(PITCHNET_COPYRIGHT
     "Copyright 2026 Session Loops, HachiTune contributors and Keinoaza")
 if(PITCHNET_DEV_BUILD)
     set(PITCHNET_PRODUCT_NAME "FlexaTune")
-    set(PITCHNET_BUNDLE_ID "com.keinoaza.flexatune")
+    set(PITCHNET_COMPANY_NAME "FlexaTune")
+    set(PITCHNET_MANUFACTURER_CODE Flxa)
+    set(PITCHNET_BUNDLE_ID "com.flexatune.flexatune")
     set(PITCHNET_PLUGIN_CODE FlxT)
     message(STATUS
         "FlexaTune: side-by-side build "
@@ -273,6 +282,8 @@ if(PITCHNET_DEV_BUILD)
         "bundle id ${PITCHNET_BUNDLE_ID})")
 else()
     set(PITCHNET_PRODUCT_NAME "Kinu Tune")
+    set(PITCHNET_COMPANY_NAME "Keinoaza")
+    set(PITCHNET_MANUFACTURER_CODE Kein)
     set(PITCHNET_BUNDLE_ID "com.keinoaza.kinutune")
     set(PITCHNET_PLUGIN_CODE Kntu)
 endif()

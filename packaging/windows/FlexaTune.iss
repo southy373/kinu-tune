@@ -1,10 +1,14 @@
 ﻿; Windows installer for FlexaTune (the script can still build the upstream
 ; Kinu Tune product when passed /DProductName="Kinu Tune").
 ; Each product installs its models into its own folder. FlexaTune
-; (batch 3.2+): %PROGRAMDATA%\FlexaTune\models - no vendor level; the
-; plug-in still reads the previous %PROGRAMDATA%\Keinoaza\FlexaTune\models
-; as a fallback, and that folder is never touched here. Kinu Tune keeps
-; %PROGRAMDATA%\Keinoaza\Kinu Tune\models.
+; (batch 3.2+): %PROGRAMDATA%\FlexaTune\models - no vendor level.
+; Batch 4 removed the plug-in's read fallback to the previous
+; %PROGRAMDATA%\Keinoaza\FlexaTune\models, and the [InstallDelete]
+; entry below removes that legacy FlexaTune-only folder on install
+; (this script places the models at the current path in the same
+; run, so nothing is lost). Kinu Tune keeps
+; %PROGRAMDATA%\Keinoaza\Kinu Tune\models, and nothing here touches
+; Kinu Tune's own folders.
 
 #ifndef AppVersion
   #error Pass /DAppVersion=<version>
@@ -35,10 +39,21 @@ AppId={{38373E75-C136-4F15-8F5D-6F966750C257}
 AppName={#ProductName}
 AppVersion={#AppVersion}
 AppVerName={#ProductName} {#AppVersion}
+; Batch 4: FlexaTune publishes under its own name and installs
+; directly under {commonpf64}\FlexaTune; Kinu Tune keeps its vendor
+; identity and its Keinoaza folder level.
+#if ProductName == "FlexaTune"
+AppPublisher=FlexaTune
+#else
 AppPublisher=Keinoaza
+#endif
 AppPublisherURL=https://github.com/keinoaza666-stack/kinu-tune
 AppSupportURL=https://github.com/keinoaza666-stack/kinu-tune/issues
+#if ProductName == "FlexaTune"
+DefaultDirName={commonpf64}\{#ProductName}
+#else
 DefaultDirName={commonpf64}\Keinoaza\{#ProductName}
+#endif
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
@@ -70,6 +85,13 @@ japanese.InstallingRedist=Microsoft Visual C++ 再頒布可能パッケージを
 [InstallDelete]
 ; Remove only this product's bundle, so Kinu Tune and FlexaTune coexist.
 Type: filesandordirs; Name: "{commoncf64}\VST3\{#ProductName}.vst3"
+#if ProductName == "FlexaTune"
+; Batch 4: the legacy batch 3 / 3.1 models folder. It belongs to
+; FlexaTune alone (Kinu Tune's own is "Keinoaza\Kinu Tune" and is not
+; named here), the plug-in no longer reads it, and this same install
+; places the models at {commonappdata}\FlexaTune\models.
+Type: filesandordirs; Name: "{commonappdata}\Keinoaza\FlexaTune"
+#endif
 
 [Files]
 Source: "{#StageDir}\{#ProductName}.vst3\*"; DestDir: "{commoncf64}\VST3\{#ProductName}.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
