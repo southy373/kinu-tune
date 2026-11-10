@@ -1,8 +1,10 @@
 ﻿; Windows installer for FlexaTune (the script can still build the upstream
 ; Kinu Tune product when passed /DProductName="Kinu Tune").
-; Each product installs its models into its own folder:
-; %PROGRAMDATA%\Keinoaza\<ProductName>\models. FlexaTune no longer shares
-; the Kinu Tune folder, and the old shared folder is never touched here.
+; Each product installs its models into its own folder. FlexaTune
+; (batch 3.2+): %PROGRAMDATA%\FlexaTune\models - no vendor level; the
+; plug-in still reads the previous %PROGRAMDATA%\Keinoaza\FlexaTune\models
+; as a fallback, and that folder is never touched here. Kinu Tune keeps
+; %PROGRAMDATA%\Keinoaza\Kinu Tune\models.
 
 #ifndef AppVersion
   #error Pass /DAppVersion=<version>
@@ -75,7 +77,7 @@ Source: "{#StageDir}\{#ProductName}.vst3\*"; DestDir: "{commoncf64}\VST3\{#Produ
 ; uninstall unless the user opts into deleting them at uninstall time
 ; (see the [Code] prompt below), so the flag stays on for that product.
 #if ProductName == "FlexaTune"
-Source: "{#StageDir}\models\*"; DestDir: "{commonappdata}\Keinoaza\{#ProductName}\models"; Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall
+Source: "{#StageDir}\models\*"; DestDir: "{commonappdata}\{#ProductName}\models"; Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall
 #else
 Source: "{#StageDir}\models\*"; DestDir: "{commonappdata}\Keinoaza\{#ProductName}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
@@ -102,7 +104,7 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    ModelsDir := ExpandConstant('{commonappdata}\Keinoaza\FlexaTune\models');
+    ModelsDir := ExpandConstant('{commonappdata}\FlexaTune\models');
     SettingsDir := ExpandConstant('{userappdata}\FlexaTune');
     if MsgBox('Also delete FlexaTune''s model files and settings?' + #13#10 +
               'Models: ' + ModelsDir + #13#10 +

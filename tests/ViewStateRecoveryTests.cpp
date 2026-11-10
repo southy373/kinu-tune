@@ -1,0 +1,401 @@
+// Batch 3.2 tests for the piano roll's view-state integrity.
+//
+// The batch 3.1 resize tests only ever read the public viewState
+// getters, so they could not see the failure the 3.1 trial reported:
+// the renderers draw from the CoordinateMapper, and the two stores can
+// disagree (or hold non-finite values) while the getters look fine.
+// These tests assert on BOTH stores, on the notes actually falling
+// inside the visible range, and - in the paint scenario - on pixels
+// really being drawn where a note should be.
+#include "../Source/Audio/EditorController.h"
+#include "../Source/UI/MainComponent.h"
+#include "../Source/UI/PianoRollComponent.h"
+#include "../Source/Undo/PitchUndoManager.h"
+#include "TestAssert.h"
+#include <cmath>
+#include <iostream>
+#include <limits>
+
+// Reaches the CoordinateMapper and the private helpers through the
+// friend hook declared in PianoRollComponent.h.
+struct PianoRollComponentTestAccess
+{
+  static CoordinateMapper &mapper(PianoRollComponent &roll)
+  {
+    return *roll.coordMapper;
+  }
+  static int notesInVisibleRange(PianoRollComponent &roll)
+  {
+    return roll.countNotesInVisibleRange();
+  }
+  static bool valuesFinite(PianoRollComponent &roll)
+  {
+    return roll.viewStateValuesAreFinite();
+  }
+  // Writes the viewState store directly, bypassing the guarded
+  // setters - the corruption the guards exist to heal.
+  static void corruptViewStateScrollY(PianoRollComponent &roll, double y)
+  {
+    roll.viewState.scrollY = y;
+  }
+};
+
+struct MainComponentTestAccess
+{
+  static PianoRollComponent &roll(MainComponent &mc) { return mc.pianoRoll; }
+
+  // Binds the controller's project the way the plug-in does, so
+  // MainComponent::getProject() (and therefore zoomToFull, used by
+  // the initial fit) sees the same project as the piano roll.
+  static void wireController(MainComponent &mc, EditorController &controller,
+                             PitchUndoManager &history)
+  {
+    mc.editorController = &controller;
+    mc.undoManager = &history;
+    mc.pianoRoll.setProject(controller.getProject());
+    mc.pianoRoll.setUndoManager(&history);
+  }
+};
+
+namespace {
+
+void drainMessages()
+{
+  juce::MessageManager::getInstance()->runDispatchLoopUntil(30);
+}
+
+Project makeProject()
+{
+  Project project;
+  auto &audio = project.getAudioData();
+  audio.sampleRate = SAMPLE_RATE;
+  const int frames = 200;
+  audio.f0.assign(frames, 220.0f);
+  audio.basePitch.assign(frames, 57.0f);
+  audio.deltaPitch.assign(frames, 0.0f);
+  audio.waveform.setSize(1, frames * HOP_SIZE);
+  project.addNote(Note(10, 60, 58));
+  project.addNote(Note(70, 120, 62));
+  project.addNote(Note(130, 190, 67));
+  return project;
+}
+
+bool storesAgree(PianoRollComponent &roll)
+{
+  auto &mapper = PianoRollComponentTestAccess::mapper(roll);
+  return std::abs(roll.getScrollX() - mapper.getScrollX()) < 0.01 &&
+         std::abs(roll.getScrollY() - mapper.getScrollY()) < 0.01 &&
+         std::abs(static_cast<double>(roll.getPixelsPerSecond()) -
+                  static_cast<double>(mapper.getPixelsPerSecond())) < 0.01 &&
+         std::abs(static_cast<double>(roll.getPixelsPerSemitone()) -
+                  static_cast<double>(mapper.getPixelsPerSemitone())) < 0.01;
+}
+
+int visibleNotes(PianoRollComponent &roll)
+{
+  return PianoRollComponentTestAccess::notesInVisibleRange(roll);
+}
+
+// A standalone roll fitted the way the app's initial fit fits it
+// (MainComponent::zoomToFull equivalent, as in PianoRollResizeTests).
+void fitRoll(PianoRollComponent &roll, Project &project)
+{
+  roll.onZoomFullRequested = [&roll, &project] {
+    roll.setPixelsPerSecond(0.0f, false);
+    float minMidi = std::numeric_limits<float>::max();
+    float maxMidi = std::numeric_limits<float>::lowest();
+    for (const auto &note : project.getNotes())
+    {
+      if (note.isRest())
+        continue;
+      minMidi = std::min(minMidi, static_cast<float>(note.getMidiNote()));
+      maxMidi = std::max(maxMidi, static_cast<float>(note.getMidiNote()));
+    }
+    roll.fitPitchRangeToView(minMidi - 3.0f, maxMidi + 3.0f);
+  };
+  roll.setSize(900, 500);
+  roll.setProject(&project);
+  roll.setSize(901, 500); // a resized() with the project bound
+  drainMessages();
+}
+
+} // namespace
+
+int main()
+{
+  juce::ScopedJuceInitialiser_GUI gui;
+  const double nanD = std::numeric_limits<double>::quiet_NaN();
+  const float nanF = std::numeric_limits<float>::quiet_NaN();
+
+  Project project = makeProject();
+
+  // --- A: non-finite values offered through the public setters are
+  // refused, and the fitted view survives untouched.
+  {
+    PianoRollComponent roll;
+    fitRoll(roll, project);
+    CHECK(visibleNotes(roll) == 3);
+    CHECK(storesAgree(roll));
+
+    roll.setScrollX(nanD);
+    roll.setScrollY(nanD);
+    roll.setPixelsPerSecond(nanF);
+    roll.setPixelsPerSemitone(nanF);
+    drainMessages();
+
+    CHECK(PianoRollComponentTestAccess::valuesFinite(roll));
+    CHECK(storesAgree(roll));
+    CHECK(visibleNotes(roll) == 3);
+  }
+
+  // --- B: corruption written straight into the viewState store (the
+  // setters bypassed) is healed by the next resize, back to a fitted,
+  // drawable state - not merely clamped.
+  {
+    PianoRollComponent roll;
+    fitRoll(roll, project);
+    PianoRollComponentTestAccess::corruptViewStateScrollY(roll, nanD);
+    CHECK(!PianoRollComponentTestAccess::valuesFinite(roll));
+
+    roll.setSize(1000, 560); // resized() -> updateScrollBars()
+    drainMessages();
+
+    CHECK(PianoRollComponentTestAccess::valuesFinite(roll));
+    CHECK(storesAgree(roll));
+    CHECK(visibleNotes(roll) == 3);
+  }
+
+  // --- C: corruption in the CoordinateMapper store only (what paint()
+  // reads) is likewise healed by a resize.
+  {
+    PianoRollComponent roll;
+    fitRoll(roll, project);
+    // CoordinateMapper's zoom setter jlimits, and jlimit passes NaN
+    // straight through - the injection the field failure implies.
+    PianoRollComponentTestAccess::mapper(roll).setPixelsPerSecond(nanF);
+    CHECK(!PianoRollComponentTestAccess::valuesFinite(roll));
+
+    roll.setSize(1024, 560);
+    drainMessages();
+
+    CHECK(PianoRollComponentTestAccess::valuesFinite(roll));
+    CHECK(storesAgree(roll));
+    CHECK(visibleNotes(roll) == 3);
+  }
+
+  // --- D: a finite zoom divergence between the stores (the view on
+  // screen no longer matches what viewport capture would save) is
+  // reconciled by updateScrollBars() on the next resize.
+  {
+    PianoRollComponent roll;
+    fitRoll(roll, project);
+    PianoRollComponentTestAccess::mapper(roll).setPixelsPerSecond(321.0f);
+    CHECK(!storesAgree(roll));
+
+    roll.setSize(1025, 560);
+    drainMessages();
+
+    CHECK(storesAgree(roll));
+    CHECK(visibleNotes(roll) == 3);
+  }
+
+  // --- E: the editor close/open path through MainComponent, following
+  // the field reproduction (visible -> close -> reopen -> blank).
+  {
+    EditorController controller(false);
+    PitchUndoManager history(100);
+    MainComponent mc(false);
+    {
+      auto &bound = *controller.getProject();
+      auto &audio = bound.getAudioData();
+      audio.sampleRate = SAMPLE_RATE;
+      audio.f0.assign(200, 220.0f);
+      audio.basePitch.assign(200, 57.0f);
+      audio.deltaPitch.assign(200, 0.0f);
+      audio.waveform.setSize(1, 200 * HOP_SIZE);
+      bound.addNote(Note(10, 60, 58));
+      bound.addNote(Note(70, 120, 62));
+      bound.addNote(Note(130, 190, 67));
+    }
+    MainComponentTestAccess::wireController(mc, controller, history);
+    auto &roll = MainComponentTestAccess::roll(mc);
+    mc.setSize(1100, 650);
+    drainMessages();
+    if (roll.getWidth() <= 0 || roll.getHeight() <= 0)
+      roll.setSize(1000, 560); // headless layout may not size the roll
+    drainMessages();
+    CHECK(roll.getWidth() > 0 && roll.getHeight() > 0);
+    CHECK(visibleNotes(roll) == 3);
+
+    // Capture of a healthy view round-trips into the same view.
+    auto captured = mc.getViewportState();
+    CHECK(captured.valid);
+    CHECK(std::isfinite(captured.scrollX) && std::isfinite(captured.scrollY));
+    mc.restoreViewportState(captured);
+    drainMessages();
+    CHECK(visibleNotes(roll) == 3);
+    CHECK(storesAgree(roll));
+
+    // A stored state with a non-finite zoom (what the pre-3.2 capture
+    // could persist) must not blank the roll on restore: the invalid
+    // fields are rejected, the rest is applied, and the captured state
+    // afterwards is clean and marked by the actual values.
+    MainViewViewportState corrupt;
+    corrupt.valid = true;
+    corrupt.scrollX = nanD;
+    corrupt.scrollY = 1.0e9;
+    corrupt.pixelsPerSecond = nanF;
+    corrupt.pixelsPerSemitone = -5.0f;
+    mc.restoreViewportState(corrupt);
+    drainMessages();
+    CHECK(PianoRollComponentTestAccess::valuesFinite(roll));
+    CHECK(storesAgree(roll));
+    CHECK(visibleNotes(roll) == 3);
+    auto afterCorrupt = mc.getViewportState();
+    CHECK(std::isfinite(afterCorrupt.scrollX) &&
+          std::isfinite(afterCorrupt.scrollY) &&
+          std::isfinite(afterCorrupt.pixelsPerSecond) &&
+          std::isfinite(afterCorrupt.pixelsPerSemitone));
+    CHECK(afterCorrupt.valid);
+
+    // A finite-but-degenerate stored state (extreme scroll at maximum
+    // vertical zoom parks the view far below the pitch content) is
+    // detected as content-free at restore time and refitted.
+    MainViewViewportState degenerate;
+    degenerate.valid = true;
+    degenerate.scrollX = 0.0;
+    degenerate.scrollY = 1.0e9;
+    degenerate.pixelsPerSecond = 100.0f;
+    degenerate.pixelsPerSemitone = MAX_PIXELS_PER_SEMITONE;
+    mc.restoreViewportState(degenerate);
+    drainMessages();
+    CHECK(PianoRollComponentTestAccess::valuesFinite(roll));
+    CHECK(storesAgree(roll));
+    CHECK(visibleNotes(roll) == 3);
+
+    // The raised zoom maximum is inside the capture/restore validity
+    // range (the guards read the same constants), while a zoom beyond
+    // it is rejected as degenerate and never captured back.
+    MainViewViewportState maxZoom;
+    maxZoom.valid = true;
+    maxZoom.scrollX = 0.0;
+    maxZoom.scrollY = roll.getScrollY();
+    maxZoom.pixelsPerSecond = MAX_PIXELS_PER_SECOND;
+    maxZoom.pixelsPerSemitone = roll.getPixelsPerSemitone();
+    mc.restoreViewportState(maxZoom);
+    drainMessages();
+    auto maxCaptured = mc.getViewportState();
+    CHECK(maxCaptured.valid);
+    CHECK(maxCaptured.pixelsPerSecond == MAX_PIXELS_PER_SECOND);
+
+    MainViewViewportState beyondMax;
+    beyondMax.valid = true;
+    beyondMax.scrollX = 0.0;
+    beyondMax.scrollY = roll.getScrollY();
+    beyondMax.pixelsPerSecond = MAX_PIXELS_PER_SECOND * 4.0f;
+    beyondMax.pixelsPerSemitone = roll.getPixelsPerSemitone();
+    mc.restoreViewportState(beyondMax);
+    drainMessages();
+    auto beyondCaptured = mc.getViewportState();
+    CHECK(beyondCaptured.pixelsPerSecond <= MAX_PIXELS_PER_SECOND);
+    CHECK(PianoRollComponentTestAccess::valuesFinite(roll));
+
+    roll.setProject(nullptr);
+  }
+
+  // --- G: the raised maximum zoom (batch 3.2: 2000 px/s, 480
+  // px/semitone) is reachable through the setters, clamps beyond it,
+  // keeps the two stores in agreement, and the visible-range math
+  // still works at the limit.
+  {
+    PianoRollComponent roll;
+    fitRoll(roll, project);
+
+    roll.setPixelsPerSecond(MAX_PIXELS_PER_SECOND, false);
+    CHECK(roll.getPixelsPerSecond() == MAX_PIXELS_PER_SECOND);
+    CHECK(storesAgree(roll));
+    // Scrolled to the start at maximum horizontal zoom, the first
+    // note still intersects the visible range.
+    CHECK(visibleNotes(roll) >= 1);
+
+    roll.setPixelsPerSecond(MAX_PIXELS_PER_SECOND * 4.0f, false);
+    CHECK(roll.getPixelsPerSecond() == MAX_PIXELS_PER_SECOND);
+    CHECK(PianoRollComponentTestAccess::valuesFinite(roll));
+
+    const float anchorCenter =
+        static_cast<float>(roll.getVisibleContentHeight()) * 0.5f;
+    roll.setPixelsPerSemitone(MAX_PIXELS_PER_SEMITONE, anchorCenter);
+    CHECK(roll.getPixelsPerSemitone() == MAX_PIXELS_PER_SEMITONE);
+    CHECK(storesAgree(roll));
+    CHECK(visibleNotes(roll) >= 1);
+
+    roll.setPixelsPerSemitone(MAX_PIXELS_PER_SEMITONE * 4.0f, anchorCenter);
+    CHECK(roll.getPixelsPerSemitone() == MAX_PIXELS_PER_SEMITONE);
+    CHECK(PianoRollComponentTestAccess::valuesFinite(roll));
+    CHECK(storesAgree(roll));
+  }
+
+  // --- F: paint() really draws the notes after a corruption + resize
+  // sequence. Compared against the same roll with no project bound,
+  // so the assertion does not depend on theme colours: inside a
+  // note's rectangle, the with-project render must differ from the
+  // empty render on far more pixels than grid lines alone explain.
+  {
+    PianoRollComponent roll;
+    fitRoll(roll, project);
+    PianoRollComponentTestAccess::corruptViewStateScrollY(roll, nanD);
+    roll.setSize(1100, 600);
+    roll.setSize(760, 420);
+    roll.setSize(1000, 560);
+    drainMessages();
+    CHECK(visibleNotes(roll) == 3);
+
+    juce::Image withNotes(juce::Image::RGB, roll.getWidth(),
+                          roll.getHeight(), true);
+    {
+      juce::Graphics g(withNotes);
+      roll.paint(g);
+    }
+
+    roll.setProject(nullptr);
+    juce::Image empty(juce::Image::RGB, roll.getWidth(), roll.getHeight(),
+                      true);
+    {
+      juce::Graphics g(empty);
+      roll.paint(g);
+    }
+
+    // The middle note (midi 62, frames 70..120) in component
+    // coordinates, from the CoordinateMapper the renderers use.
+    auto &mapper = PianoRollComponentTestAccess::mapper(roll);
+    const double sampleRate = project.getAudioData().sampleRate;
+    const int x0 = PianoRollComponent::pianoKeysWidth + 2 +
+                   static_cast<int>((70.0 * HOP_SIZE / sampleRate) *
+                                    mapper.getPixelsPerSecond() -
+                                    mapper.getScrollX());
+    const int x1 = PianoRollComponent::pianoKeysWidth - 2 +
+                   static_cast<int>((120.0 * HOP_SIZE / sampleRate) *
+                                    mapper.getPixelsPerSecond() -
+                                    mapper.getScrollX());
+    const int yMid = PianoRollComponent::headerHeight +
+                     static_cast<int>((MAX_MIDI_NOTE - 62.0 - 0.5) *
+                                          mapper.getPixelsPerSemitone() -
+                                      mapper.getScrollY());
+    CHECK(x1 > x0 && yMid > 0 && yMid < roll.getHeight());
+
+    int differing = 0, sampled = 0;
+    for (int x = x0; x < x1; ++x)
+    {
+      ++sampled;
+      if (withNotes.getPixelAt(x, yMid) != empty.getPixelAt(x, yMid))
+        ++differing;
+    }
+    // The note body fills most of its row; grid/waveform differences
+    // alone would stay well under half the row.
+    CHECK(sampled > 20);
+    CHECK(differing > sampled / 2);
+  }
+
+  std::cout << "ViewStateRecoveryTests passed" << std::endl;
+  return 0;
+}

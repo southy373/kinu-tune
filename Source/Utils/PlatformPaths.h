@@ -2,18 +2,24 @@
 
 #include "../JuceHeader.h"
 
+#include <vector>
+
 /**
  * Platform-specific path utilities.
  *
  * macOS:
- *   - Models: ~/Library/Application Support/Keinoaza/FlexaTune/models/, then
- *             /Library/Application Support/Keinoaza/FlexaTune/models/
+ *   - Models: ~/Library/Application Support/FlexaTune/models/, then
+ *             /Library/Application Support/FlexaTune/models/
+ *             (batch 3 / 3.1 installs under .../Keinoaza/FlexaTune/ are
+ *             still read as a fallback - see resourcesRootCandidates)
  *   - Logs: ~/Library/Logs/FlexaTune/
  *   - Config: ~/Library/FlexaTune/
  *
  * Windows:
- *   - Models: %APPDATA%/Keinoaza/FlexaTune/models/, then
- *             %PROGRAMDATA%/Keinoaza/FlexaTune/models/
+ *   - Models: %APPDATA%/FlexaTune/models/, then
+ *             %PROGRAMDATA%/FlexaTune/models/
+ *             (batch 3 / 3.1 installs under .../Keinoaza/FlexaTune/ are
+ *             still read as a fallback - see resourcesRootCandidates)
  *   - Logs: %APPDATA%/FlexaTune/Logs/
  *   - Config: %APPDATA%/FlexaTune/
  *
@@ -26,6 +32,64 @@ namespace PlatformPaths
 {
     inline constexpr const char *kVendorFolderName = "Keinoaza";
     inline constexpr const char *kProductFolderName = "FlexaTune";
+
+    // Batch 3.2: the resources root no longer nests under the vendor
+    // folder - <base>/FlexaTune instead of <base>/Keinoaza/FlexaTune -
+    // so shared data lives at %PROGRAMDATA%/FlexaTune on Windows.
+    // Batch 3 / 3.1 installs keep their models under the legacy root,
+    // so resolution prefers the new roots and falls back to the legacy
+    // ones; the legacy folder is never moved or deleted.
+    inline juce::File resourcesRootForBase(const juce::File &base,
+                                           bool legacyHierarchy)
+    {
+        auto root = base;
+        if (legacyHierarchy)
+            root = root.getChildFile(kVendorFolderName);
+        return root.getChildFile(kProductFolderName);
+    }
+
+    inline juce::File resourcesBaseFor(juce::File::SpecialLocationType location)
+    {
+        auto base = juce::File::getSpecialLocation(location);
+#if JUCE_MAC
+        base = base.getChildFile("Application Support");
+#endif
+        return base;
+    }
+
+    // Preference order: new hierarchy (per-user, then common), then
+    // the legacy Keinoaza hierarchy (per-user, then common).
+    inline std::vector<juce::File> resourcesRootCandidates()
+    {
+        const auto userBase =
+            resourcesBaseFor(juce::File::userApplicationDataDirectory);
+        const auto commonBase =
+            resourcesBaseFor(juce::File::commonApplicationDataDirectory);
+        return {resourcesRootForBase(userBase, false),
+                resourcesRootForBase(commonBase, false),
+                resourcesRootForBase(userBase, true),
+                resourcesRootForBase(commonBase, true)};
+    }
+
+    inline std::vector<juce::File> legacyResourcesRootCandidates()
+    {
+        const auto userBase =
+            resourcesBaseFor(juce::File::userApplicationDataDirectory);
+        const auto commonBase =
+            resourcesBaseFor(juce::File::commonApplicationDataDirectory);
+        return {resourcesRootForBase(userBase, true),
+                resourcesRootForBase(commonBase, true)};
+    }
+
+    inline juce::File
+    pickResourcesDirectory(const std::vector<juce::File> &candidatesInPreferenceOrder,
+                           const juce::File &fallback)
+    {
+        for (const auto &candidate : candidatesInPreferenceOrder)
+            if (candidate.getChildFile("models").isDirectory())
+                return candidate;
+        return fallback;
+    }
 
     inline juce::File getProjectResourcesDirectory()
     {
@@ -51,22 +115,16 @@ namespace PlatformPaths
 
         return {};
 #else
-        // FlexaTune keeps its resources apart from PitchNet's. The per-user
-        // folder comes first so a local install needs no administrator rights.
-        auto resourcesUnder = [](juce::File::SpecialLocationType location)
-        {
-            return juce::File::getSpecialLocation(location)
-#if JUCE_MAC
-                .getChildFile("Application Support")
-#endif
-                .getChildFile(kVendorFolderName)
-                .getChildFile(kProductFolderName);
-        };
-
-        auto userResources = resourcesUnder(juce::File::userApplicationDataDirectory);
-        if (userResources.getChildFile("models").isDirectory())
-            return userResources;
-        return resourcesUnder(juce::File::commonApplicationDataDirectory);
+        // FlexaTune keeps its resources apart from PitchNet's. The
+        // per-user root comes first so a local install needs no
+        // administrator rights; when neither new root has a models
+        // folder yet, the legacy (batch 3 / 3.1) Keinoaza roots are
+        // honoured so existing installs keep finding their models.
+        return pickResourcesDirectory(
+            resourcesRootCandidates(),
+            resourcesRootForBase(
+                resourcesBaseFor(juce::File::commonApplicationDataDirectory),
+                false));
 #endif
     }
 
@@ -166,6 +224,19 @@ namespace PlatformPaths
             if (parent == dir)
                 break;
             dir = parent;
+        }
+
+        // Batch 3.2: probe the legacy-hierarchy roots for this specific
+        // file. getProjectResourcesDirectory() prefers the new roots
+        // once their models folder exists, so a model that only exists
+        // under the batch 3 / 3.1 Keinoaza hierarchy (e.g. placed there
+        // by hand) would otherwise be missed.
+        for (const auto &legacyRoot : legacyResourcesRootCandidates())
+        {
+            auto legacyCandidate = legacyRoot.getChildFile("models")
+                                       .getChildFile(fileName);
+            if (legacyCandidate.exists())
+                return legacyCandidate;
         }
 
         // Default path used in production packaging.

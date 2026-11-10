@@ -15,6 +15,138 @@ The full history of the changes is in the git log of this repository.
 
 ## Summary of changes
 
+### Batch 3.2 (vanishing-segments view-state fix, models folder move, zoom limits)
+
+The batch 3.1 trial showed the resize fix did **not** cure the
+"all segments (and the waveform) disappear and never come back"
+report. Follow-up reports from the same machine narrowed it down:
+the edit data survives the disappearance (pitch edits are intact
+afterwards), closing the editor while everything is visible and
+reopening it brings the blank state back, and Nuendo's Add/Remove
+Event - which rebinds the editor without the captured state -
+revives the display. That pattern points at the captured view state,
+not at lost project data. The piano roll keeps its view state in two
+stores - `PianoRollComponent`'s `viewState` (which viewport capture
+reads) and the `CoordinateMapper` (which every renderer draws from) -
+and before this batch the two were only partially synchronised:
+`updateScrollBars()` pushed the scroll offsets but never the zoom
+factors, several setters early-returned on "no significant change"
+without checking the other store, and JUCE's `jlimit` passes NaN
+straight through, so a single non-finite scroll or zoom value could
+enter the state and could never be clamped back out of it.
+**Which exact mechanism fired on the user's machine is unverified**
+until the next trial: the fixes below are layered so that each
+candidate mechanism (non-finite values, store divergence, degenerate
+restored scroll, empty-project write-back) is covered independently,
+and the new diagnostics log records enough to identify the mechanism
+from that trial's log file.
+
+- **Finite-value guards and complete two-store sync
+  (PianoRollComponent).** The view-state setters
+  (`setPixelsPerSecond`, `setPixelsPerSemitone`, `setScrollX`,
+  `setScrollY`) and `scrollBarMoved()` now reject non-finite input,
+  and refuse to compute from an already-corrupt state.
+  `updateScrollBars()` - which runs on every resize and at the end of
+  most view operations - now checks all eight values (both stores x
+  scrollX/scrollY/pixelsPerSecond/pixelsPerSemitone) for finiteness,
+  pushes the zoom factors to the CoordinateMapper as well as the
+  scroll offsets, and, on detecting a non-finite value, recovers to a
+  fit-equivalent sane state (whole timeline fitted horizontally, the
+  project's pitch range fitted vertically) instead of leaving the
+  corrupt value in place. The setters' "no significant change" early
+  returns no longer skip the sync when the other store has drifted.
+  Every recovery is logged with the corrupt values it replaced.
+  All of these finiteness checks inspect the exponent bits directly
+  instead of using `std::isfinite`: Release builds of pitchnet_core /
+  pitchnet_ui are compiled with `-ffast-math`, whose
+  `-ffinite-math-only` folds `std::isfinite` / `std::isnan` to
+  constant results, which would compile the guards away in exactly
+  the builds that ship. (The same applies to the pre-existing
+  `std::isfinite` guard in `fitPitchRangeToView`, which was inert in
+  Release builds for the same reason and now uses the bit-level
+  check too.)
+- **Capture / restore guards (MainComponent).**
+  `getViewportState()` no longer captures corrupt values: a
+  non-finite scroll is replaced by 0, and a non-finite or
+  out-of-range zoom marks the capture invalid (so the next open uses
+  the default fitted view). `restoreViewportState()` validates each
+  field before applying it and, afterwards, runs a sanity check: if
+  the project has segments but the restored view contains none of
+  them (a finite-but-degenerate scroll, e.g. parked far past the
+  content), the view is refitted to the content. That check runs only
+  at restore time, never during normal scrolling.
+- **Maximum zoom-in raised 4x (Constants).** `MAX_PIXELS_PER_SECOND`
+  goes 500 -> **2000** and `MAX_PIXELS_PER_SEMITONE` 120 -> **480**,
+  for fine narration pitch editing: at 2000 px/s one analysis frame
+  (512 samples) spans ~23 px, and at 480 px/semitone one cent spans
+  ~4.8 px. Every limit consumer reads these constants - the piano
+  roll setters and wheel zoom, the CoordinateMapper, the scroll
+  clamps, the toolbar and workspace zoom sliders, the overview, and
+  the capture/restore validation above - so the new limits are
+  consistent everywhere with no other code changes; the batch 3.2
+  guards were written against the constants, not literal values.
+  Rendering cost at high zoom stays bounded by the existing culling:
+  the renderers draw only the visible range, and the waveform
+  background cache is a viewport-sized strip (capped at 8192 px
+  wide), not a whole-content image.
+- **ARA write-back guard (PluginProcessor, Project).**
+  `updateProjectStateFromEditor()` now skips a write-back whose
+  incoming project is empty of analysis (no notes, no F0, no
+  waveform) when the stored snapshot or active region project holds
+  analysis data, and the editor-teardown slot assignment in
+  `setMainComponent()` keeps an analysed stored region project over
+  an unanalysed outgoing one. Analysed-to-analysed write-backs -
+  normal editing - are unaffected; a waveform-only project (audio
+  loaded, analysis not yet produced) is deliberately not blocked.
+  The shared decision lives in `projectHasAnalysisData` /
+  `projectIsEmptyOfAnalysis` / `shouldPreserveStoredProject`
+  (Project.h); "has analysis" requires notes or F0 but not a
+  waveform, because state-archive-restored projects carry notes + F0
+  and no waveform.
+- **Diagnostics (viewstate log).** A new always-on log,
+  `viewstate_<session>.txt` in the plugin's logs folder (the regular
+  debug log is compiled out of release builds), records: editor open
+  (which store the project was bound from, note/F0/waveform counts
+  for the bound project, the snapshot and the stored region slot),
+  editor close (the same summaries for the outgoing project and both
+  stores), viewport capture and restore lines with **both** stores'
+  four values side by side plus how many notes fall inside the
+  visible range and the kind of the last synchronisation, recovery
+  events with the corrupt values replaced, and thinned `resized()`
+  lines (at most one per second, only when the view values changed).
+  This is what the next trial's log will be read against to confirm
+  the mechanism.
+- **Tests.** New `ViewStateRecoveryTests` (fault injection through
+  the public setters, direct store corruption, and
+  `restoreViewportState`; two-store agreement assertions; a `paint()`
+  pixel check after a corruption + resize sequence; the raised zoom
+  limits), `AraProjectSyncGuardTests` (the write-back guard decision
+  and a simulated close/reopen-while-analysis-pending lifecycle) and
+  `PlatformPathsTests` (new/legacy root resolution order). A pre-fix
+  reproduction attempt against the batch 3.1 tree is recorded
+  honestly: under this toolchain's `-ffast-math` Release flags the
+  injected NaN values were folded by the clamps into boundary values
+  instead of persisting as NaN, so a deterministic "NaN forever"
+  reproduction was not obtained on Linux/GCC - the shipped Windows
+  build is MSVC, whose fast-float behaviour differs, and the
+  finite-but-degenerate captured-state route needs no NaN at all.
+  The guards are bit-level and flag-independent for that reason.
+- **Models folder: the vendor level is dropped from the shared-data
+  path.** Models now live at `%PROGRAMDATA%\FlexaTune\models`
+  (previously `%PROGRAMDATA%\Keinoaza\FlexaTune\models`); the
+  installer places them there and its uninstall prompt points there.
+  The plug-in prefers the new roots (per-user, then common) and falls
+  back to the legacy Keinoaza roots when the new ones have no models
+  folder, and additionally probes the legacy roots per file, so batch
+  3 / 3.1 installs keep finding their models; the old folder is never
+  moved or deleted. The same root also carries the bundled `lang/`
+  and `fonts/` resources, which move with it. Unchanged, as
+  specified: the bundle ID (`com.keinoaza.flexatune`), the
+  manufacturer code (`Kein`), `%APPDATA%\FlexaTune` (settings and
+  logs), and the Program Files install destination
+  (`{commonpf64}\Keinoaza\FlexaTune` in the installer script - the
+  vendor level was only dropped from the shared-data path).
+
 ### Batch 3.1 (DirectML session ladder, resize fixes)
 
 Follow-up to the batch 3 trial on the user's machine (2026-11-10): the

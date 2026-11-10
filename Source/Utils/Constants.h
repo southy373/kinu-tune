@@ -24,9 +24,16 @@ constexpr float DEFAULT_PIXELS_PER_SEMITONE = 45.0f;
 // song-length take (about 9 minutes in 1100 px); the piano roll's own
 // limit is the larger of this and "whole timeline in view".
 constexpr float MIN_PIXELS_PER_SECOND = 2.0f;
-constexpr float MAX_PIXELS_PER_SECOND = 500.0f;
+// Batch 3.2: the maximum zoom-in was raised 4x in both axes for fine
+// narration pitch work. At 2000 px/s one analysis frame (512 samples)
+// spans ~23 px, so per-frame pitch and waveform detail is editable;
+// at 480 px/semitone one cent spans ~4.8 px, so few-cent movements
+// are visible and grabbable. Every consumer (setters, scroll clamps,
+// sliders, overview, the batch 3.2 capture/restore validation) reads
+// these constants, so the limits stay consistent everywhere.
+constexpr float MAX_PIXELS_PER_SECOND = 2000.0f;
 constexpr float MIN_PIXELS_PER_SEMITONE = 8.0f;
-constexpr float MAX_PIXELS_PER_SEMITONE = 120.0f;
+constexpr float MAX_PIXELS_PER_SEMITONE = 480.0f;
 constexpr float DEFAULT_EMPTY_PROJECT_DURATION_SECONDS = 30.0f;
 
 // UI colors moved to Source/Utils/UI/Theme.h

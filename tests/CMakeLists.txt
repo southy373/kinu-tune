@@ -70,6 +70,21 @@ target_link_libraries(TrackGestureTests PRIVATE pitchnet_ui)
 target_compile_features(TrackGestureTests PRIVATE cxx_std_17)
 add_test(NAME TrackGestureTests COMMAND TrackGestureTests)
 
+add_executable(ViewStateRecoveryTests ViewStateRecoveryTests.cpp)
+target_link_libraries(ViewStateRecoveryTests PRIVATE pitchnet_ui)
+target_compile_features(ViewStateRecoveryTests PRIVATE cxx_std_17)
+add_test(NAME ViewStateRecoveryTests COMMAND ViewStateRecoveryTests)
+
+add_executable(AraProjectSyncGuardTests AraProjectSyncGuardTests.cpp)
+target_link_libraries(AraProjectSyncGuardTests PRIVATE pitchnet_core)
+target_compile_features(AraProjectSyncGuardTests PRIVATE cxx_std_17)
+add_test(NAME AraProjectSyncGuardTests COMMAND AraProjectSyncGuardTests)
+
+add_executable(PlatformPathsTests PlatformPathsTests.cpp)
+target_link_libraries(PlatformPathsTests PRIVATE pitchnet_core)
+target_compile_features(PlatformPathsTests PRIVATE cxx_std_17)
+add_test(NAME PlatformPathsTests COMMAND PlatformPathsTests)
+
 add_executable(PianoRollResizeTests PianoRollResizeTests.cpp)
 target_link_libraries(PianoRollResizeTests PRIVATE pitchnet_ui)
 target_compile_features(PianoRollResizeTests PRIVATE cxx_std_17)

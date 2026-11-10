@@ -50,6 +50,7 @@ class PianoRollComponent : public juce::Component,
                            public juce::TooltipClient
 {
   friend class PianoRollInteractionContext;
+  friend struct PianoRollComponentTestAccess;
 
 public:
   using juce::Component::keyPressed;
@@ -193,6 +194,14 @@ public:
   double getScrollX() const { return scrollX; }
   void setScrollY(double y);
   double getScrollY() const { return scrollY; }
+  // Batch 3.2: if the bound project has segments but none of them fall
+  // inside the visible range (a finite-but-degenerate view, e.g. a
+  // restored scroll parked far past the content), refit the view to the
+  // content and return true.
+  bool recoverIfNoContentVisible(const char *reason);
+  // Batch 3.2: append one diagnostics line with both view-state stores
+  // and the bound project's summary (see ViewStateDiagnostics).
+  void logViewStateDiagnostics(const juce::String &tag) const;
   // End of the scrollable timeline, in the canvas's (project) time.
   double getTimelineDuration() const;
   // Start of the scrollable timeline: 0 in Clip mode; the host's time zero,
@@ -393,6 +402,17 @@ private:
   void showResetMenu(Note &note);
   void setHoveredNote(Note *note);
   void updateScrollBars();
+  // Batch 3.2: view-state integrity. The renderers read the
+  // CoordinateMapper while viewport capture reads viewState, so the two
+  // stores must agree and stay finite; these helpers enforce that.
+  bool viewStateValuesAreFinite() const;
+  void syncViewStateToCoordMapper();
+  void fitViewToContent();
+  void recoverFromCorruptViewState(const char *reason);
+  // Notes whose time/pitch span intersects the visible range, computed
+  // from the CoordinateMapper (what paint() will actually draw).
+  int countNotesInVisibleRange() const;
+  const char *lastViewStateSyncSource = "none";
   bool nudgeSelectedNotesBySemitones(int semitoneDelta);
   // Absolute snap: moves each selected segment onto the next semitone (or
   // scale tone) in the given direction.
@@ -533,6 +553,16 @@ private:
   bool playbackActive = false;
   double &scrollX = viewState.scrollX;
   double &scrollY = viewState.scrollY;
+
+  // Batch 3.2: re-entrancy guard for recoverFromCorruptViewState()
+  // (the recovery's fit re-enters updateScrollBars()).
+  bool recoveringViewState = false;
+
+  // Batch 3.2: throttling state for the resized() diagnostics line (at
+  // most one line per second, and only when the view values changed).
+  juce::int64 lastViewStateLogMs = 0;
+  double lastLoggedScrollX = 0.0, lastLoggedScrollY = 0.0;
+  double lastLoggedPixelsPerSecond = 0.0, lastLoggedPixelsPerSemitone = 0.0;
 
   // Edit mode
   EditMode &editMode = viewState.editMode;

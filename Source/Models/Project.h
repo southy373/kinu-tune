@@ -429,3 +429,34 @@ private:
     int scaleRootNote = 0; // 0 = C, 1 = C#, ..., 11 = B
     std::shared_ptr<MacroParameters> macroParameters;
 };
+
+// Batch 3.2: analysis-content predicates for the ARA project sync guard.
+// A project "has analysis data" when pitch analysis produced notes or an
+// F0 track. The waveform is deliberately NOT required: projects restored
+// from the plugin state archive carry notes + F0 but no waveform (the
+// audio stays in the host), and they must count as analysed.
+inline bool projectHasAnalysisData(const Project &project)
+{
+    return !project.getNotes().empty() || !project.getAudioData().f0.empty();
+}
+
+// A project is "empty of analysis" when it carries nothing an analysis
+// could have produced: no notes, no F0 and no waveform. Such a project
+// (e.g. a freshly created editor-side project whose analysis never ran)
+// must never replace an analysed one in the stored region state.
+inline bool projectIsEmptyOfAnalysis(const Project &project)
+{
+    return project.getNotes().empty() && project.getAudioData().f0.empty() &&
+           project.getAudioData().waveform.getNumSamples() == 0;
+}
+
+// Batch 3.2 write-back guard decision, shared by the processor and the
+// lifecycle tests: keep the stored region project when it holds analysis
+// data and the outgoing editor project is empty of analysis.
+inline bool shouldPreserveStoredProject(const Project *stored,
+                                        const Project *outgoing)
+{
+    if (stored == nullptr || !projectHasAnalysisData(*stored))
+        return false;
+    return outgoing == nullptr || projectIsEmptyOfAnalysis(*outgoing);
+}

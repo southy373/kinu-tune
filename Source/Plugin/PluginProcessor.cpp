@@ -8,6 +8,7 @@
 #include "../UI/Main/SettingsManager.h"
 #include "../Utils/Localization.h"
 #include "../Utils/Constants.h"
+#include "../Utils/ViewStateDiagnostics.h"
 #include "../Utils/MelSpectrogram.h"
 #include "../Utils/OnnxRuntime.h"
 #include "../Utils/OnnxRuntimeLoader.h"
@@ -71,6 +72,19 @@ void stampRegionSpanInModificationTime(Project &project,
       source != nullptr ? source->getSampleRate() : 0.0);
 }
 #endif // JucePlugin_Enable_ARA
+} // namespace
+
+namespace {
+// Batch 3.2 diagnostics: one-line summary of a project's analysis
+// content for the viewstate log (see ViewStateDiagnostics).
+juce::String summarizeProjectForLog(const char *label, const Project *project) {
+  if (project == nullptr)
+    return juce::String(label) + "{none}";
+  return ViewStateDiagnostics::formatProject(
+      label, static_cast<int>(project->getNotes().size()),
+      static_cast<int>(project->getAudioData().f0.size()),
+      project->getAudioData().waveform.getNumSamples());
+}
 } // namespace
 
 namespace {
@@ -1572,6 +1586,37 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
 
 void PitchNetAudioProcessor::updateProjectStateFromEditor(
     const Project &project) {
+  // Batch 3.2 write-back guard: an editor project carrying no analysis
+  // at all (no notes, no F0, no waveform - e.g. a fresh project bound
+  // while region analysis was still pending) must not replace an
+  // analysed stored project. Without this, closing such an editor
+  // could overwrite the snapshot (and, through it, the region
+  // archive) with the empty project, and the next open would show a
+  // blank roll even though nothing was wrong with the view.
+  // Analysed-to-analysed write-backs (normal editing) are unaffected.
+  if (projectIsEmptyOfAnalysis(project)) {
+    bool storedHasAnalysis =
+        araAnalysisProjectSnapshot != nullptr &&
+        projectHasAnalysisData(*araAnalysisProjectSnapshot);
+#if JucePlugin_Enable_ARA
+    if (!storedHasAnalysis && canvasShowsActiveAraRegion &&
+        activeRegionKey.isNotEmpty()) {
+      auto storedIt = araRegions.find(activeRegionKey);
+      storedHasAnalysis = storedIt != araRegions.end() &&
+                          storedIt->second.project != nullptr &&
+                          projectHasAnalysisData(*storedIt->second.project);
+    }
+#endif
+    if (storedHasAnalysis) {
+      ViewStateDiagnostics::logLine(
+          "project-sync-guard skip empty write-back " +
+          summarizeProjectForLog("incoming", &project) + " " +
+          summarizeProjectForLog("snapshot",
+                                 araAnalysisProjectSnapshot.get()));
+      return;
+    }
+  }
+
   ++araCanvasEditSerial;
   std::unique_ptr<Project> araRegionScopedProject;
 #if JucePlugin_Enable_ARA
@@ -2010,9 +2055,28 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
       updateProjectStateFromEditor(*project);
     viewportState = mainComponent->getViewportState();
 #if JucePlugin_Enable_ARA
-    if (canvasShowsActiveAraRegion && activeRegionKey.isNotEmpty())
-      araRegions[activeRegionKey].project =
-          mainComponent->exchangeProject(nullptr);
+    if (canvasShowsActiveAraRegion && activeRegionKey.isNotEmpty()) {
+      auto &slot = araRegions[activeRegionKey];
+      auto outgoing = mainComponent->exchangeProject(nullptr);
+      // Batch 3.2: never let an unanalysed editor project evict an
+      // analysed stored region project at teardown (the slot normally
+      // holds nothing while the editor is open - it was moved out at
+      // bind time - so this only fires on double-bind races, but those
+      // are exactly the timing-dependent cases from the field report).
+      ViewStateDiagnostics::logLine(
+          "editor-close " + summarizeProjectForLog("outgoing", outgoing.get()) +
+          " " + summarizeProjectForLog("storedSlot", slot.project.get()) +
+          " " +
+          summarizeProjectForLog("snapshot",
+                                 araAnalysisProjectSnapshot.get()));
+      if (shouldPreserveStoredProject(slot.project.get(), outgoing.get())) {
+        ViewStateDiagnostics::logLine(
+            "region-writeback-preserved stored region project kept; "
+            "unanalysed outgoing project dropped");
+      } else {
+        slot.project = std::move(outgoing);
+      }
+    }
 #endif
     mainComponent->bindUndoManager(nullptr);
     mainComponent->bindBackendController(nullptr);
@@ -2031,6 +2095,9 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
     mc->bindRealtimeProcessor(realtimeProcessor);
 
     bool restoredPersistentProject = false;
+    // Batch 3.2 diagnostics: which store the editor's project came
+    // from, recorded for the editor-open log line below.
+    juce::String bindSource = "none";
 #if JucePlugin_Enable_ARA
     if (regionCanvasAnalysisPending.load()) {
       // An ARA host may replace the editor while region analysis is running.
@@ -2041,6 +2108,7 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
       mc->setStatusMessage(TR("progress.analyzing"));
       mc->showAnalysisProgress(0.0);
       restoredPersistentProject = true;
+      bindSource = "analysis-pending";
     } else if (activeRegionKey.isNotEmpty()) {
       auto activeIt = araRegions.find(activeRegionKey);
       if (activeIt != araRegions.end() && activeIt->second.project) {
@@ -2051,6 +2119,7 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
         mc->bindRealtimeProcessor(realtimeProcessor);
         canvasShowsActiveAraRegion = true;
         restoredPersistentProject = true;
+        bindSource = "region-slot";
       }
     }
 #endif
@@ -2058,13 +2127,18 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
         mc->restoreProjectJson(pendingStateJson)) {
       pendingStateJson.clear();
       restoredPersistentProject = true;
+      bindSource = "state-json";
     } else if (!restoredPersistentProject && araAnalysisProjectSnapshot) {
       restoredPersistentProject =
           mc->restoreProjectSnapshot(*araAnalysisProjectSnapshot);
+      if (restoredPersistentProject)
+        bindSource = "processor-snapshot";
     } else if (!restoredPersistentProject &&
                getAraAnalysisProjectJson().isNotEmpty()) {
       restoredPersistentProject =
           mc->restoreProjectJson(getAraAnalysisProjectJson());
+      if (restoredPersistentProject)
+        bindSource = "analysis-json";
     }
 
     // Sync current APVTS parameter values to project
@@ -2100,6 +2174,31 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
     }
 
     mc->restoreViewportState(viewportState);
+
+    // Batch 3.2 diagnostics: together with the piano roll's own
+    // capture/restore lines (both view-state stores + notes inside the
+    // visible range), this editor-open line records which store the
+    // project was bound from and whether the bound project still holds
+    // its analysis - the two facts that separate C1 (corrupt view
+    // state) from C2 (project replaced by an empty one).
+    {
+      juce::String openLine = "editor-open bind=" + bindSource + " " +
+                              summarizeProjectForLog("bound", mc->getProject()) +
+                              " " +
+                              summarizeProjectForLog(
+                                  "snapshot", araAnalysisProjectSnapshot.get());
+#if JucePlugin_Enable_ARA
+      if (activeRegionKey.isNotEmpty()) {
+        auto slotIt = araRegions.find(activeRegionKey);
+        openLine += " " + summarizeProjectForLog(
+                              "storedSlot",
+                              slotIt != araRegions.end()
+                                  ? slotIt->second.project.get()
+                                  : nullptr);
+      }
+#endif
+      ViewStateDiagnostics::logLine(openLine);
+    }
 
 #if JucePlugin_Enable_ARA
     // The active region is normally set before the editor exists, so every

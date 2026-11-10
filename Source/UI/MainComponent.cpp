@@ -9,6 +9,7 @@
 #include "../Undo/LengthPercentAction.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/Constants.h"
+#include "../Utils/ViewStateDiagnostics.h"
 #include "../Utils/UI/Theme.h"
 #include "../Utils/Localization.h"
 #include "../Utils/OnnxRuntime.h"
@@ -1109,6 +1110,41 @@ MainViewViewportState MainComponent::getViewportState() const
   state.pixelsPerSecond = pianoRoll.getPixelsPerSecond();
   state.pixelsPerSemitone = pianoRoll.getPixelsPerSemitone();
   state.valid = true;
+
+  // Batch 3.2: never capture a corrupt view state. A non-finite scroll
+  // is replaced by 0, and a non-finite or degenerate zoom marks the
+  // whole capture invalid so the next editor open starts from the
+  // default fitted view instead of restoring the corruption verbatim
+  // (the close-while-visible / reopen-to-blank failure mode).
+  bool capturedCorrupt = false;
+  if (!ViewStateDiagnostics::valueIsFinite(state.scrollX))
+  {
+    state.scrollX = 0.0;
+    capturedCorrupt = true;
+  }
+  if (!ViewStateDiagnostics::valueIsFinite(state.scrollY))
+  {
+    state.scrollY = 0.0;
+    capturedCorrupt = true;
+  }
+  if (!ViewStateDiagnostics::valueIsFinite(state.pixelsPerSecond) ||
+      state.pixelsPerSecond < MIN_PIXELS_PER_SECOND ||
+      state.pixelsPerSecond > MAX_PIXELS_PER_SECOND ||
+      !ViewStateDiagnostics::valueIsFinite(state.pixelsPerSemitone) ||
+      state.pixelsPerSemitone < MIN_PIXELS_PER_SEMITONE ||
+      state.pixelsPerSemitone > MAX_PIXELS_PER_SEMITONE)
+  {
+    state.valid = false;
+    capturedCorrupt = true;
+  }
+  if (capturedCorrupt)
+    ViewStateDiagnostics::logLine(
+        "viewport-capture-corrupt " +
+        ViewStateDiagnostics::formatViewState(
+            "captured", state.scrollX, state.scrollY,
+            state.pixelsPerSecond, state.pixelsPerSemitone) +
+        " valid=" + juce::String(state.valid ? 1 : 0));
+  pianoRoll.logViewStateDiagnostics("viewport-capture");
   return state;
 }
 
@@ -1118,10 +1154,47 @@ void MainComponent::restoreViewportState(
   if (!state.valid)
     return;
 
-  pianoRoll.setPixelsPerSecond(state.pixelsPerSecond, false);
-  pianoRoll.setPixelsPerSemitone(state.pixelsPerSemitone, 0.0f);
-  pianoRoll.setScrollX(state.scrollX);
-  pianoRoll.setScrollY(state.scrollY);
+  // Batch 3.2: validate each field before applying it. A stored state
+  // written by an older build (or corrupted in between) must not push
+  // NaN / degenerate values into the piano roll; rejected fields keep
+  // the current (fitted default) view values instead.
+  const bool zoomXOk = ViewStateDiagnostics::valueIsFinite(state.pixelsPerSecond) &&
+                       state.pixelsPerSecond >= MIN_PIXELS_PER_SECOND &&
+                       state.pixelsPerSecond <= MAX_PIXELS_PER_SECOND;
+  const bool zoomYOk = ViewStateDiagnostics::valueIsFinite(state.pixelsPerSemitone) &&
+                       state.pixelsPerSemitone >= MIN_PIXELS_PER_SEMITONE &&
+                       state.pixelsPerSemitone <= MAX_PIXELS_PER_SEMITONE;
+  const bool scrollXOk = ViewStateDiagnostics::valueIsFinite(state.scrollX);
+  const bool scrollYOk = ViewStateDiagnostics::valueIsFinite(state.scrollY);
+  if (!zoomXOk || !zoomYOk || !scrollXOk || !scrollYOk)
+    ViewStateDiagnostics::logLine(
+        "viewport-restore-reject " +
+        ViewStateDiagnostics::formatViewState(
+            "stored", state.scrollX, state.scrollY, state.pixelsPerSecond,
+            state.pixelsPerSemitone) +
+        " apply{zoomX=" + juce::String(zoomXOk ? 1 : 0) +
+        ", zoomY=" + juce::String(zoomYOk ? 1 : 0) +
+        ", scrollX=" + juce::String(scrollXOk ? 1 : 0) +
+        ", scrollY=" + juce::String(scrollYOk ? 1 : 0) + "}");
+
+  if (zoomXOk)
+    pianoRoll.setPixelsPerSecond(state.pixelsPerSecond, false);
+  if (zoomYOk)
+    pianoRoll.setPixelsPerSemitone(state.pixelsPerSemitone, 0.0f);
+  if (scrollXOk)
+    pianoRoll.setScrollX(state.scrollX);
+  if (scrollYOk)
+    pianoRoll.setScrollY(state.scrollY);
+
+  // Batch 3.2 sanity check (from the 2026-11-10 field report: closing
+  // the editor while everything was visible, then reopening to a blank
+  // roll): the restored values can be finite yet still park the view
+  // where no content exists. If the project has segments and the
+  // restored view contains none of them, refit instead of showing a
+  // blank roll.
+  pianoRoll.recoverIfNoContentVisible("restoreViewportState");
+
+  pianoRoll.logViewStateDiagnostics("viewport-restore");
   toolbar.setZoom(pianoRoll.getPixelsPerSecond());
   pianoRollView.refreshOverview();
 }

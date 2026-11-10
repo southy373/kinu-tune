@@ -2,6 +2,7 @@
 #include <map>
 #include "../Utils/PitchMacroScope.h"
 #include "../Utils/AppLogger.h"
+#include "../Utils/ViewStateDiagnostics.h"
 #include "../Undo/AmplitudeAction.h"
 #include "../Undo/InspectorEditAction.h"
 #include "../Utils/BasePitchCurve.h"
@@ -711,6 +712,30 @@ void PianoRollComponent::resized()
 
   updateScrollBars();
   updatePreviewButtonBounds();
+
+  // Batch 3.2 diagnostics (thinned): at most one line per second, and
+  // only when the view values changed since the last logged line, so a
+  // window drag does not flood the log but the state at the moment of a
+  // resize-driven disappearance is on record.
+  {
+    const juce::int64 nowMs = juce::Time::currentTimeMillis();
+    const bool changed =
+        std::abs(scrollX - lastLoggedScrollX) > 0.01 ||
+        std::abs(scrollY - lastLoggedScrollY) > 0.01 ||
+        std::abs(static_cast<double>(pixelsPerSecond) -
+                 lastLoggedPixelsPerSecond) > 0.01 ||
+        std::abs(static_cast<double>(pixelsPerSemitone) -
+                 lastLoggedPixelsPerSemitone) > 0.01;
+    if (changed && nowMs - lastViewStateLogMs >= 1000)
+    {
+      lastViewStateLogMs = nowMs;
+      lastLoggedScrollX = scrollX;
+      lastLoggedScrollY = scrollY;
+      lastLoggedPixelsPerSecond = pixelsPerSecond;
+      lastLoggedPixelsPerSemitone = pixelsPerSemitone;
+      logViewStateDiagnostics("resized");
+    }
+  }
 
   // Batch 3: opening a project starts with every segment in view
   // (horizontal fit to the content, vertical fit to the segments' pitch
@@ -2799,10 +2824,23 @@ void PianoRollComponent::mouseMagnify(const juce::MouseEvent &e,
 void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
                                         double newRangeStart)
 {
+  // Batch 3.2: a scrollbar must never push a non-finite value into the
+  // view state, and a corrupt stored zoom would poison the clamps below.
+  if (!ViewStateDiagnostics::valueIsFinite(newRangeStart))
+  {
+    ViewStateDiagnostics::logLine(
+        "setter-reject scrollBarMoved value=" +
+        ViewStateDiagnostics::formatValue(newRangeStart));
+    return;
+  }
+  if (!viewStateValuesAreFinite() && coordMapper != nullptr)
+    recoverFromCorruptViewState("scrollBarMoved");
+
   if (scrollBar == &horizontalScrollBar)
   {
     scrollX = clampScrollX(newRangeStart);
     coordMapper->setScrollX(scrollX);
+    lastViewStateSyncSource = "scrollBarMoved(horizontal)";
 
     // Notify scroll changed for synchronization
     if (onScrollChanged)
@@ -2824,6 +2862,7 @@ void PianoRollComponent::scrollBarMoved(juce::ScrollBar *scrollBar,
         0.0, totalHeight - static_cast<double>(getVisibleContentHeight()));
     scrollY = juce::jlimit(0.0, maxScrollY, newRangeStart);
     coordMapper->setScrollY(scrollY);
+    lastViewStateSyncSource = "scrollBarMoved(vertical)";
     if (std::abs(verticalScrollBar.getCurrentRangeStart() - scrollY) > 0.01)
       verticalScrollBar.setCurrentRangeStart(scrollY);
   }
@@ -3891,6 +3930,19 @@ void PianoRollComponent::setPlaybackActive(bool active)
 
 void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
 {
+  // Batch 3.2: a non-finite zoom must never enter the view state (JUCE's
+  // jlimit passes NaN straight through, so it would persist forever),
+  // and a setter must never compute from an already-corrupt state.
+  if (!ViewStateDiagnostics::valueIsFinite(pps))
+  {
+    ViewStateDiagnostics::logLine(
+        "setter-reject setPixelsPerSecond value=" +
+        ViewStateDiagnostics::formatValue(pps));
+    return;
+  }
+  if (!viewStateValuesAreFinite() && coordMapper != nullptr)
+    recoverFromCorruptViewState("setPixelsPerSecond");
+
   float oldPps = pixelsPerSecond;
   const int visibleWidth = getVisibleContentWidth();
   const double totalTime = getTimelineLength();
@@ -3903,7 +3955,16 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
       juce::jlimit(minPpsX, MAX_PIXELS_PER_SECOND, pps);
 
   if (std::abs(oldPps - newPps) < 0.01f)
-    return; // No significant change
+  {
+    // No significant change - but the early return must not skip the
+    // store sync: if the CoordinateMapper drifted from viewState, heal
+    // it here instead of letting the divergence persist (batch 3.2).
+    if (coordMapper != nullptr &&
+        std::abs(static_cast<double>(coordMapper->getPixelsPerSecond()) -
+                 static_cast<double>(pixelsPerSecond)) >= 0.01)
+      syncViewStateToCoordMapper();
+    return;
+  }
 
   if (centerOnCursor)
   {
@@ -3922,6 +3983,7 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
   pixelsPerSecond = newPps;
   coordMapper->setPixelsPerSecond(newPps);
   updateScrollBars();
+  lastViewStateSyncSource = "setPixelsPerSecond";
   updatePreviewButtonBounds();
   repaint();
 
@@ -3931,6 +3993,17 @@ void PianoRollComponent::setPixelsPerSecond(float pps, bool centerOnCursor)
 
 void PianoRollComponent::setPixelsPerSemitone(float pps, float anchorContentY)
 {
+  // Batch 3.2: reject non-finite zooms (see setPixelsPerSecond).
+  if (!ViewStateDiagnostics::valueIsFinite(pps))
+  {
+    ViewStateDiagnostics::logLine(
+        "setter-reject setPixelsPerSemitone value=" +
+        ViewStateDiagnostics::formatValue(pps));
+    return;
+  }
+  if (!viewStateValuesAreFinite() && coordMapper != nullptr)
+    recoverFromCorruptViewState("setPixelsPerSemitone");
+
   const float oldPps = pixelsPerSemitone;
   const int visibleHeight = getVisibleContentHeight();
   const float minPpsForFill =
@@ -3941,7 +4014,13 @@ void PianoRollComponent::setPixelsPerSemitone(float pps, float anchorContentY)
 
   const float newPps = juce::jlimit(minPps, MAX_PIXELS_PER_SEMITONE, pps);
   if (std::abs(oldPps - newPps) < 0.01f)
+  {
+    if (coordMapper != nullptr &&
+        std::abs(static_cast<double>(coordMapper->getPixelsPerSemitone()) -
+                 static_cast<double>(pixelsPerSemitone)) >= 0.01)
+      syncViewStateToCoordMapper();
     return;
+  }
 
   float effectiveAnchorY = anchorContentY;
   if (effectiveAnchorY < 0.0f)
@@ -3966,19 +4045,37 @@ void PianoRollComponent::setPixelsPerSemitone(float pps, float anchorContentY)
   coordMapper->setScrollY(scrollY);
 
   updateScrollBars();
+  lastViewStateSyncSource = "setPixelsPerSemitone";
   updatePreviewButtonBounds();
   repaint();
 }
 
 void PianoRollComponent::setScrollX(double x)
 {
+  // Batch 3.2: reject non-finite scrolls (see setPixelsPerSecond).
+  if (!ViewStateDiagnostics::valueIsFinite(x))
+  {
+    ViewStateDiagnostics::logLine(
+        "setter-reject setScrollX value=" +
+        ViewStateDiagnostics::formatValue(x));
+    return;
+  }
+  if (!viewStateValuesAreFinite() && coordMapper != nullptr)
+    recoverFromCorruptViewState("setScrollX");
+
   const double clampedX = clampScrollX(x);
 
   if (std::abs(scrollX - clampedX) < 0.01)
+  {
+    if (coordMapper != nullptr &&
+        std::abs(coordMapper->getScrollX() - scrollX) >= 0.01)
+      syncViewStateToCoordMapper();
     return; // No significant change
+  }
 
   scrollX = clampedX;
   coordMapper->setScrollX(clampedX);
+  lastViewStateSyncSource = "setScrollX";
   horizontalScrollBar.setCurrentRangeStart(clampedX);
 
   // Don't call onScrollChanged here to avoid infinite recursion
@@ -3990,6 +4087,17 @@ void PianoRollComponent::setScrollX(double x)
 
 void PianoRollComponent::setScrollY(double y)
 {
+  // Batch 3.2: reject non-finite scrolls (see setPixelsPerSecond).
+  if (!ViewStateDiagnostics::valueIsFinite(y))
+  {
+    ViewStateDiagnostics::logLine(
+        "setter-reject setScrollY value=" +
+        ViewStateDiagnostics::formatValue(y));
+    return;
+  }
+  if (!viewStateValuesAreFinite() && coordMapper != nullptr)
+    recoverFromCorruptViewState("setScrollY");
+
   const double totalHeight =
       (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
   const double maxScrollY = std::max(
@@ -3997,10 +4105,16 @@ void PianoRollComponent::setScrollY(double y)
   const double clampedY = juce::jlimit(0.0, maxScrollY, y);
 
   if (std::abs(scrollY - clampedY) < 0.01)
+  {
+    if (coordMapper != nullptr &&
+        std::abs(coordMapper->getScrollY() - scrollY) >= 0.01)
+      syncViewStateToCoordMapper();
     return;
+  }
 
   scrollY = clampedY;
   coordMapper->setScrollY(clampedY);
+  lastViewStateSyncSource = "setScrollY";
   verticalScrollBar.setCurrentRangeStart(clampedY);
   updatePreviewButtonBounds();
   repaint();
@@ -4024,6 +4138,16 @@ void PianoRollComponent::centerOnPitchRange(float minMidi, float maxMidi)
   double totalHeight = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
   newScrollY =
       juce::jlimit(0.0, std::max(0.0, totalHeight - visibleHeight), newScrollY);
+
+  // Batch 3.2: midiToY() reads the CoordinateMapper; if either store was
+  // corrupt the computed position is unusable - recover instead of
+  // writing it into the view state.
+  if (!ViewStateDiagnostics::valueIsFinite(newScrollY))
+  {
+    if (coordMapper != nullptr)
+      recoverFromCorruptViewState("centerOnPitchRange");
+    return;
+  }
 
   scrollY = newScrollY;
   coordMapper->setScrollY(newScrollY);
@@ -4076,7 +4200,7 @@ bool PianoRollComponent::centerOnCurrentPitchRange()
 
 void PianoRollComponent::fitPitchRangeToView(float minMidi, float maxMidi)
 {
-  if (!std::isfinite(minMidi) || !std::isfinite(maxMidi))
+  if (!ViewStateDiagnostics::valueIsFinite(minMidi) || !ViewStateDiagnostics::valueIsFinite(maxMidi))
     return;
 
   if (minMidi > maxMidi)
@@ -4793,8 +4917,254 @@ void PianoRollComponent::setHoveredNote(Note *note)
   repaint();
 }
 
+bool PianoRollComponent::viewStateValuesAreFinite() const
+{
+  if (!ViewStateDiagnostics::valueIsFinite(scrollX) || !ViewStateDiagnostics::valueIsFinite(scrollY) ||
+      !ViewStateDiagnostics::valueIsFinite(pixelsPerSecond) || !ViewStateDiagnostics::valueIsFinite(pixelsPerSemitone))
+    return false;
+  if (coordMapper == nullptr)
+    return true;
+  return ViewStateDiagnostics::valueIsFinite(coordMapper->getScrollX()) &&
+         ViewStateDiagnostics::valueIsFinite(coordMapper->getScrollY()) &&
+         ViewStateDiagnostics::valueIsFinite(coordMapper->getPixelsPerSecond()) &&
+         ViewStateDiagnostics::valueIsFinite(coordMapper->getPixelsPerSemitone());
+}
+
+void PianoRollComponent::syncViewStateToCoordMapper()
+{
+  if (coordMapper == nullptr)
+    return;
+  coordMapper->setPixelsPerSecond(pixelsPerSecond);
+  coordMapper->setPixelsPerSemitone(pixelsPerSemitone);
+  coordMapper->setScrollX(scrollX);
+  coordMapper->setScrollY(scrollY);
+}
+
+int PianoRollComponent::countNotesInVisibleRange() const
+{
+  if (project == nullptr || coordMapper == nullptr)
+    return 0;
+
+  const double viewPps = coordMapper->getPixelsPerSecond();
+  const double viewPpst = coordMapper->getPixelsPerSemitone();
+  if (!ViewStateDiagnostics::valueIsFinite(viewPps) || !ViewStateDiagnostics::valueIsFinite(viewPpst) || viewPps <= 0.0 ||
+      viewPpst <= 0.0)
+    return 0;
+
+  const double sampleRate = project->getAudioData().sampleRate > 0
+                                ? project->getAudioData().sampleRate
+                                : 44100.0;
+  const double visibleStart =
+      coordMapper->getScrollX() / viewPps - getTimelineStart();
+  const double visibleEnd =
+      visibleStart +
+      static_cast<double>(getVisibleContentWidth()) / viewPps;
+  const double topMidi =
+      static_cast<double>(MAX_MIDI_NOTE) - coordMapper->getScrollY() / viewPpst;
+  const double bottomMidi =
+      static_cast<double>(MAX_MIDI_NOTE) -
+      (coordMapper->getScrollY() +
+       static_cast<double>(getVisibleContentHeight())) /
+          viewPpst;
+
+  int count = 0;
+  for (const auto &note : project->getNotes())
+  {
+    if (note.isRestOrDeleted())
+      continue;
+    const double noteStart = note.getStartFrame() / sampleRate;
+    const double noteEnd = note.getEndFrame() / sampleRate;
+    const double midi = note.getAdjustedMidiNote();
+    if (noteEnd >= visibleStart && noteStart <= visibleEnd &&
+        midi >= bottomMidi - 1.0 && midi <= topMidi + 1.0)
+      ++count;
+  }
+  return count;
+}
+
+void PianoRollComponent::logViewStateDiagnostics(const juce::String &tag) const
+{
+  juce::String line =
+      tag + " " +
+      ViewStateDiagnostics::formatViewState("viewState", scrollX, scrollY,
+                                            pixelsPerSecond,
+                                            pixelsPerSemitone);
+  if (coordMapper != nullptr)
+    line += " " + ViewStateDiagnostics::formatViewState(
+                      "coordMapper", coordMapper->getScrollX(),
+                      coordMapper->getScrollY(),
+                      coordMapper->getPixelsPerSecond(),
+                      coordMapper->getPixelsPerSemitone());
+  if (project != nullptr)
+    line += " " + ViewStateDiagnostics::formatProject(
+                      "project",
+                      static_cast<int>(project->getNotes().size()),
+                      static_cast<int>(project->getAudioData().f0.size()),
+                      project->getAudioData().waveform.getNumSamples());
+  else
+    line += " project{none}";
+  line += " notesInVisibleRange=" + juce::String(countNotesInVisibleRange());
+  line += juce::String(" lastSync=") + juce::String(lastViewStateSyncSource);
+  line += " size=" + juce::String(getWidth()) + "x" +
+          juce::String(getHeight());
+  ViewStateDiagnostics::logLine(line);
+}
+
+void PianoRollComponent::recoverFromCorruptViewState(const char *reason)
+{
+  // Re-entrancy guard: recovery itself triggers updateScrollBars()
+  // (via the fit), which must not start a second recovery.
+  if (recoveringViewState)
+  {
+    pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND;
+    pixelsPerSemitone = DEFAULT_PIXELS_PER_SEMITONE;
+    scrollX = getTimelineStart() * static_cast<double>(pixelsPerSecond);
+    scrollY = 0.0;
+    syncViewStateToCoordMapper();
+    return;
+  }
+  recoveringViewState = true;
+
+  // Record the corrupt values before touching anything; this line is
+  // the evidence that separates a corrupt view state from a lost
+  // project in the next trial log.
+  juce::String line = juce::String("viewstate-recover reason=") +
+                      juce::String(reason) + " " +
+                      ViewStateDiagnostics::formatViewState(
+                          "viewState", scrollX, scrollY, pixelsPerSecond,
+                          pixelsPerSemitone);
+  if (coordMapper != nullptr)
+    line += " " + ViewStateDiagnostics::formatViewState(
+                      "coordMapper", coordMapper->getScrollX(),
+                      coordMapper->getScrollY(),
+                      coordMapper->getPixelsPerSecond(),
+                      coordMapper->getPixelsPerSemitone());
+  if (project != nullptr)
+    line += " " + ViewStateDiagnostics::formatProject(
+                      "project",
+                      static_cast<int>(project->getNotes().size()),
+                      static_cast<int>(project->getAudioData().f0.size()),
+                      project->getAudioData().waveform.getNumSamples());
+  ViewStateDiagnostics::logLine(line);
+
+  fitViewToContent();
+  lastViewStateSyncSource = "recoverFromCorruptViewState";
+  logViewStateDiagnostics("after-recover");
+  recoveringViewState = false;
+}
+
+void PianoRollComponent::fitViewToContent()
+{
+  // Sanitize both stores first: the fit below calls
+  // fitPitchRangeToView(), which re-enters updateScrollBars(); the
+  // CoordinateMapper must already hold finite values by then, or the
+  // re-entrant call would attempt its own recovery and recurse.
+  pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND;
+  pixelsPerSemitone = DEFAULT_PIXELS_PER_SEMITONE;
+  scrollX = getTimelineStart() * static_cast<double>(pixelsPerSecond);
+  scrollY = 0.0;
+  syncViewStateToCoordMapper();
+
+  // Horizontal: fit the whole timeline into the view when its extent is
+  // known (the same state the batch-3 initial fit produces), otherwise
+  // fall back to the default zoom at the timeline start.
+  const int visibleWidth = getVisibleContentWidth();
+  const double totalTime = getTimelineLength();
+  float fittedPps = DEFAULT_PIXELS_PER_SECOND;
+  if (visibleWidth > 0 && totalTime > 0.0)
+    fittedPps = juce::jlimit(MIN_PIXELS_PER_SECOND, MAX_PIXELS_PER_SECOND,
+                             static_cast<float>(visibleWidth / totalTime));
+  pixelsPerSecond = fittedPps;
+  scrollX = getTimelineStart() * static_cast<double>(fittedPps);
+
+  // Vertical: fit the project's pitch range when there are notes to
+  // fit, otherwise reset to the default zoom at the top.
+  bool fittedVertically = false;
+  if (project != nullptr && getVisibleContentHeight() > 0)
+  {
+    float minMidi = std::numeric_limits<float>::max();
+    float maxMidi = std::numeric_limits<float>::lowest();
+    for (const auto &note : project->getNotes())
+    {
+      if (note.isRestOrDeleted())
+        continue;
+      const float midi = note.getAdjustedMidiNote();
+      minMidi = std::min(minMidi, midi);
+      maxMidi = std::max(maxMidi, midi);
+    }
+    if (minMidi <= maxMidi)
+    {
+      fitPitchRangeToView(minMidi, maxMidi);
+      fittedVertically = true;
+    }
+  }
+  if (!fittedVertically)
+  {
+    pixelsPerSemitone = DEFAULT_PIXELS_PER_SEMITONE;
+    scrollY = 0.0;
+  }
+
+  syncViewStateToCoordMapper();
+}
+
+bool PianoRollComponent::recoverIfNoContentVisible(const char *reason)
+{
+  if (project == nullptr || coordMapper == nullptr)
+    return false;
+  // With no real size yet (restore can run before the first layout)
+  // the visible range is meaningless; the check would misfire on every
+  // open. The finite-value guards still apply in that case.
+  if (getVisibleContentWidth() <= 0 || getVisibleContentHeight() <= 0)
+    return false;
+
+  int totalSegments = 0;
+  for (const auto &note : project->getNotes())
+    if (!note.isRestOrDeleted())
+      ++totalSegments;
+  if (totalSegments == 0)
+    return false;
+  if (countNotesInVisibleRange() > 0)
+    return false;
+
+  // The project has segments but the current view shows none of them:
+  // a finite-but-degenerate view (e.g. a restored scroll far past the
+  // content). Treat it like corruption and refit.
+  logViewStateDiagnostics(juce::String("content-free-view:") +
+                          juce::String(reason));
+  fitViewToContent();
+  lastViewStateSyncSource = "recoverIfNoContentVisible";
+  logViewStateDiagnostics("after-content-fit");
+  return true;
+}
+
 void PianoRollComponent::updateScrollBars()
 {
+  // Batch 3.2: this runs on every resize and at the end of most view
+  // operations, which makes it the reconciliation point for the two
+  // view-state stores. A non-finite value in either store can never
+  // heal on its own (JUCE's jlimit passes NaN straight through), so
+  // recover to a fit-equivalent state first; otherwise complete the
+  // sync batch 3.1 started by pushing the zoom factors to the
+  // CoordinateMapper too, not just the scroll offsets, so the values
+  // viewport capture reads (viewState) and the values the renderers
+  // read (coordMapper) cannot drift apart across a resize.
+  if (!viewStateValuesAreFinite())
+  {
+    if (coordMapper != nullptr)
+      recoverFromCorruptViewState("updateScrollBars");
+  }
+  else if (coordMapper != nullptr &&
+           (std::abs(static_cast<double>(coordMapper->getPixelsPerSecond()) -
+                     static_cast<double>(pixelsPerSecond)) >= 0.01 ||
+            std::abs(static_cast<double>(
+                         coordMapper->getPixelsPerSemitone()) -
+                     static_cast<double>(pixelsPerSemitone)) >= 0.01))
+  {
+    coordMapper->setPixelsPerSecond(pixelsPerSecond);
+    coordMapper->setPixelsPerSemitone(pixelsPerSemitone);
+    lastViewStateSyncSource = "updateScrollBars(zoom-sync)";
+  }
+
   if (project)
   {
     float totalHeight = (MAX_MIDI_NOTE - MIN_MIDI_NOTE + 1) * pixelsPerSemitone;
