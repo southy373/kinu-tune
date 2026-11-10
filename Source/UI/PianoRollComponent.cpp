@@ -4951,14 +4951,24 @@ int PianoRollComponent::countNotesInVisibleRange() const
       viewPpst <= 0.0)
     return 0;
 
-  const double sampleRate = project->getAudioData().sampleRate > 0
-                                ? project->getAudioData().sampleRate
-                                : 44100.0;
-  const double visibleStart =
-      coordMapper->getScrollX() / viewPps - getTimelineStart();
+  // The time axis must agree with what the note renderer actually
+  // draws, or this count (and the content-free check built on it)
+  // disagrees with the screen. NoteRenderer::draw culls purely in
+  // project time: the visible window is [scrollX / pps,
+  // (scrollX + componentWidth) / pps] with componentWidth = this
+  // component's full width as passed to draw(), and note times are
+  // framesToSeconds(getVisualStart/EndFrame()) - analysis frames via
+  // HOP_SIZE / SAMPLE_RATE, not raw frames over the sample rate.
+  // There is no timeline-start term: Track mode's offset shifts only
+  // the ruler labels (CoordinateMapper's display offset), never the
+  // drawn positions. An earlier version subtracted getTimelineStart()
+  // here and divided the committed frames by the sample rate, so in
+  // Track mode - and at any scrolled position - the window it tested
+  // was not the window on screen.
+  const double visibleStart = coordMapper->getScrollX() / viewPps;
   const double visibleEnd =
-      visibleStart +
-      static_cast<double>(getVisibleContentWidth()) / viewPps;
+      (coordMapper->getScrollX() + static_cast<double>(getWidth())) /
+      viewPps;
   const double topMidi =
       static_cast<double>(MAX_MIDI_NOTE) - coordMapper->getScrollY() / viewPpst;
   const double bottomMidi =
@@ -4967,15 +4977,38 @@ int PianoRollComponent::countNotesInVisibleRange() const
        static_cast<double>(getVisibleContentHeight())) /
           viewPpst;
 
+  // Mirror the renderer's culling, including its ghost range: in
+  // segment style the source position of a timing-moved note is drawn
+  // as a ghost, so a note counts as visible when either its visual
+  // (edited) range or its source range intersects the window. (The
+  // renderer itself does no vertical culling; the pitch band above is
+  // kept so a view parked away from the content vertically still
+  // reads as content-free.)
+  const bool ghostMayShow = noteRenderer != nullptr &&
+                            noteRenderer->isSegmentStyle() &&
+                            !noteRenderer->isGreyscale();
+
   int count = 0;
   for (const auto &note : project->getNotes())
   {
     if (note.isRestOrDeleted())
       continue;
-    const double noteStart = note.getStartFrame() / sampleRate;
-    const double noteEnd = note.getEndFrame() / sampleRate;
+    const double noteStart =
+        static_cast<double>(framesToSeconds(note.getVisualStartFrame()));
+    const double noteEnd =
+        static_cast<double>(framesToSeconds(note.getVisualEndFrame()));
+    const double cullStart =
+        ghostMayShow
+            ? std::min(noteStart, static_cast<double>(framesToSeconds(
+                                      note.getSrcStartFrame())))
+            : noteStart;
+    const double cullEnd =
+        ghostMayShow
+            ? std::max(noteEnd, static_cast<double>(framesToSeconds(
+                                    note.getSrcEndFrame())))
+            : noteEnd;
     const double midi = note.getAdjustedMidiNote();
-    if (noteEnd >= visibleStart && noteStart <= visibleEnd &&
+    if (cullEnd >= visibleStart && cullStart <= visibleEnd &&
         midi >= bottomMidi - 1.0 && midi <= topMidi + 1.0)
       ++count;
   }

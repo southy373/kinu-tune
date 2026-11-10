@@ -327,6 +327,14 @@ int main()
     roll.setPixelsPerSemitone(MAX_PIXELS_PER_SEMITONE, anchorCenter);
     CHECK(roll.getPixelsPerSemitone() == MAX_PIXELS_PER_SEMITONE);
     CHECK(storesAgree(roll));
+    // At maximum zoom on both axes the horizontal window (parked at
+    // the content start) and the vertical anchor (the fitted range's
+    // centre pitch) do not coincide on any single note, so scroll to
+    // the middle note before expecting it in range. (The count's
+    // original note timing - raw frames over the sample rate - made
+    // every note pass the horizontal test at any scroll position,
+    // which is what hid this in the first version of this block.)
+    roll.setScrollX(0.9 * MAX_PIXELS_PER_SECOND);
     CHECK(visibleNotes(roll) >= 1);
 
     roll.setPixelsPerSemitone(MAX_PIXELS_PER_SEMITONE * 4.0f, anchorCenter);
@@ -394,6 +402,37 @@ int main()
     // alone would stay well under half the row.
     CHECK(sampled > 20);
     CHECK(differing > sampled / 2);
+  }
+
+  // --- H: the visible-range count uses the renderer's project-time
+  // math. The renderer culls in project time only (Track mode's
+  // offset moves the ruler, not the drawing), with note times from
+  // framesToSeconds(visual frames). The first version of the count
+  // subtracted getTimelineStart() and timed notes as raw frames /
+  // sampleRate, so it reported 0 in both cases below even though
+  // the notes were on screen.
+  {
+    PianoRollComponent roll;
+    fitRoll(roll, project);
+
+    // Track mode with a host-timeline offset: the scrollable canvas
+    // now starts at the host's zero, -30 s in project time, but the
+    // fitted view still shows all three notes.
+    roll.setTimelineDisplayOffset(30.0);
+    roll.setTrackViewMode(true);
+    drainMessages();
+    CHECK(roll.getTimelineStart() == -30.0);
+    CHECK(visibleNotes(roll) == 3);
+
+    // Clip mode again, zoomed in and scrolled so the visible window
+    // starts at 1.45 s: only the last note (frames 130..190, about
+    // 1.51..2.21 s) intersects it.
+    roll.setTrackViewMode(false);
+    roll.setTimelineDisplayOffset(0.0);
+    roll.setPixelsPerSecond(1000.0f, false);
+    roll.setScrollX(1450.0);
+    drainMessages();
+    CHECK(visibleNotes(roll) == 1);
   }
 
   std::cout << "ViewStateRecoveryTests passed" << std::endl;

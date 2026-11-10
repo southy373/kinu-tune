@@ -75,6 +75,14 @@ from that trial's log file.
   them (a finite-but-degenerate scroll, e.g. parked far past the
   content), the view is refitted to the content. That check runs only
   at restore time, never during normal scrolling.
+  (Review follow-up: the visible-range count behind that check,
+  `countNotesInVisibleRange()`, now uses exactly the note renderer's
+  culling math - project-time window with no timeline-start term,
+  `framesToSeconds()` on the visual frames, and the segment-style
+  ghost range - instead of its first version, which subtracted
+  `getTimelineStart()` and timed notes as raw frames over the sample
+  rate and so drifted from the drawn view in Track mode and at any
+  scrolled position.)
 - **Maximum zoom-in raised 4x (Constants).** `MAX_PIXELS_PER_SECOND`
   goes 500 -> **2000** and `MAX_PIXELS_PER_SEMITONE` 120 -> **480**,
   for fine narration pitch editing: at 2000 px/s one analysis frame

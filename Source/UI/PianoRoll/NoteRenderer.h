@@ -46,6 +46,7 @@ public:
   // Inactive regions in Track mode: note bodies use a grey ramp (light along
   // the centre line, dark at the edges) instead of the pitch-accuracy colours.
   void setGreyscale(bool shouldUseGreyscale) { greyscale = shouldUseGreyscale; }
+  bool isGreyscale() const { return greyscale; }
   // Pinned tracks: stroke each note body in this colour. Combine with
   // setFillBodies(false) to draw the outline on its own.
   void setOutlineColour(std::optional<juce::Colour> colour) { outlineColour = colour; }
@@ -53,6 +54,7 @@ public:
   // Cubase VariAudio look: flat rectangular segments on the pitch row and a
   // pitch-name label on the hovered segment, instead of waveform-shaped blobs.
   void setSegmentStyle(bool shouldUseSegments) { segmentStyle = shouldUseSegments; }
+  bool isSegmentStyle() const { return segmentStyle; }
   void setPreviewPlaybackState(bool active, int startFrame, int endFrame,
                                double currentTime)
   {
