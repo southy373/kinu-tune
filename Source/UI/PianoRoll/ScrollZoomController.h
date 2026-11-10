@@ -8,6 +8,16 @@
 /**
  * Handles scroll and zoom operations for the piano roll.
  * Manages scrollbars and mouse wheel/magnify gestures.
+ *
+ * Batch 4 note: this controller is currently NOT wired into
+ * PianoRollComponent (nothing calls handleMouseWheel/handleMagnify,
+ * and its scrollbars are never given bounds), so it is unreachable in
+ * the shipped editor. It writes the CoordinateMapper directly,
+ * bypassing PianoRollComponent's guarded view-state setters
+ * (batch 3.2/4). If it is ever wired in, route its scroll/zoom writes
+ * through PianoRollComponent::setScrollX/setScrollY/
+ * setPixelsPerSecond/setPixelsPerSemitone instead of letting it own
+ * a second, unguarded path into the view state.
  */
 class ScrollZoomController : public juce::ScrollBar::Listener {
 public:

@@ -92,8 +92,9 @@ private:
 
     PitchNetAudioProcessor& audioProcessor;
     std::unique_ptr<IMainView> mainView;
-    // Batch 2 (insert prototype): two-fader view shown instead of the
-    // main editor whenever no ARA document is bound.
+    // Host playhead sync state (see timerCallback): the last position
+    // and play state pushed to the main view, so unchanged values are
+    // not re-sent every tick.
     double lastSyncedHostPlayheadSeconds = 0.0;
     bool lastSyncedHostPlayState = false;
     bool hasSyncedHostPlayhead = false;

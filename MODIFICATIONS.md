@@ -15,6 +15,61 @@ The full history of the changes is in the git log of this repository.
 
 ## Summary of changes
 
+### Batch 4 (selectable pitch-shift engines, Clip-mode display fix, noct GPU variant, Keinoaza erasure)
+
+- **Selectable pitch-shift engines (the headline change).** The
+  pitch-shift stage of Classic rendering - previously PSOLA only -
+  now offers two further algorithms, selectable in the Parameters
+  panel (default remains PSOLA, so existing behaviour is unchanged;
+  switching re-renders everything, like the AI/Classic switch).
+  Rubber Band Library v4.0.0 (GPL-2.0-or-later, compatible with this
+  project's AGPL-3.0; built with its built-in FFT and BSD-style
+  resampler so no FFTW code is involved) runs its R3 (Finer) engine
+  offline per render unit at a fixed ratio, with formant preservation
+  driven by the existing formant controls. Signalsmith Stretch 1.4.0
+  (MIT, header-only, with signalsmith-linear 0.6.4) is driven along
+  the renderer's frame map with its latency compensated. Both are
+  vendored under `third_party/` with their versions and download
+  hashes pinned in `cmake/DependencyHashes.cmake` and their licence
+  texts in `licenses/`; automated tests render a harmonic-rich signal
+  at ratios 0.5 / 1.0 / 2.0 and check output length, energy and the
+  resulting fundamental for both engines.
+- **Global faders unified.** The ARA editor's global pitch % /
+  formant / length % controls (top of the left panel) are now the
+  same slider component as the panel's segment faders, keeping
+  double-click numeric entry and Alt+click reset. The now-unused
+  `GlobalFaderSlider` component was removed.
+- **Vanishing-display bug fixed at its root cause.** The batch 3.2
+  diagnostics identified the mechanism: the editor was silently in
+  Track mode (the setting defaulted to Track and was re-applied at
+  every ARA editor creation), and Track mode's initial fit fitted
+  the whole host timeline, parking the view far before the clip's
+  content - finite, in-bounds values the 3.2 guards could not catch.
+  The editor is now fixed to Clip mode: the setting defaults to
+  Clip, is no longer re-applied at editor creation, and the
+  Clip/Track toggle is hidden (the Track code stays, dormant). Two
+  defences from the same diagnosis are added: a restored viewport
+  suppresses the one-time initial fit, and scrollbar callbacks are
+  suppressed while ranges are set programmatically.
+- **ConvTranspose-free BigVGAN variant ("noct") replaces the opset
+  17 variant.** The field log showed DirectML rejects the
+  ConvTranspose parameterisation itself (both opsets, both
+  optimisation levels), so `tools/convert_bigvgan.py` now derives a
+  variant with every ConvTranspose rewritten as zero-insertion
+  upsampling plus a plain Conv, verified fail-closed against the
+  main model (max abs error 1.29e-05 at adoption). The session
+  ladder tries noct on DirectML first, then the main model, then
+  CPU; the variant replaces the opset 17 file, so the installer size
+  is unchanged.
+- **FlexaTune's own Keinoaza traces erased.** The FlexaTune build
+  now uses bundle id `com.flexatune.flexatune`, manufacturer code
+  `Flxa` and company name FlexaTune; the installer publishes as
+  FlexaTune, installs directly under `{commonpf64}\FlexaTune`, and
+  deletes the legacy `{commonappdata}\Keinoaza\FlexaTune` folder;
+  the code's read fallback to that legacy folder is removed. Kinu
+  Tune's own identity, folders and installer behaviour are
+  untouched, as are all licence and copyright notices.
+
 ### Batch 3.2 (vanishing-segments view-state fix, models folder move, zoom limits)
 
 The batch 3.1 trial showed the resize fix did **not** cure the
