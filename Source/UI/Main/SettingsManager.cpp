@@ -48,6 +48,9 @@ void SettingsManager::loadSettings()
   synthesisEngineType = synthesisEngineTypeForSavedPreference(
       stringToSynthesisEngineType(synthesisEngineStr));
 
+  pitchShiftEngine = stringToPitchShiftEngine(xml->getStringAttribute(
+      "pitchShiftEngine", pitchShiftEngineToString(pitchShiftEngine)));
+
   if (xml->hasAttribute("gpuDeviceId"))
   {
     gpuDeviceId = xml->getIntAttribute("gpuDeviceId", gpuDeviceId);
@@ -121,6 +124,12 @@ void SettingsManager::loadConfig()
               configObj->getProperty("synthesisEngine").toString();
           synthesisEngineType = synthesisEngineTypeForSavedPreference(
               stringToSynthesisEngineType(synthesisEngineStr));
+        }
+
+        if (configObj->hasProperty("pitchShiftEngine"))
+        {
+          pitchShiftEngine = stringToPitchShiftEngine(
+              configObj->getProperty("pitchShiftEngine").toString());
         }
 
         if (configObj->hasProperty("gpuDeviceId"))
@@ -253,6 +262,8 @@ void SettingsManager::saveConfig()
                       pitchDetectorTypeToString(pitchDetectorType));
   config->setProperty("synthesisEngine",
                       synthesisEngineTypeToString(synthesisEngineType));
+  config->setProperty("pitchShiftEngine",
+                      pitchShiftEngineToString(pitchShiftEngine));
   if (hasStoredGpuDeviceIdSetting)
     config->setProperty("gpuDeviceId", gpuDeviceId);
   config->setProperty("language", language);

@@ -48,6 +48,7 @@ EditorController::EditorController(bool enableAudioDevice)
   incrementalSynth->setVocoder(vocoder.get());
   incrementalSynth->setBigVganVocoder(bigVganVocoder.get());
   incrementalSynth->setSynthesisEngine(getSynthesisEngineType());
+  incrementalSynth->setPitchShiftEngine(getPitchShiftEngine());
   if (audioEngine)
     playbackController->setAudioEngine(audioEngine.get());
 }
@@ -74,6 +75,30 @@ void EditorController::shareSynthesisEngine(
   sharedSynthesisEngine = std::move(shared);
   if (incrementalSynth)
     incrementalSynth->setSynthesisEngine(getSynthesisEngineType());
+}
+
+void EditorController::setPitchShiftEngine(PitchShiftEngine engine)
+{
+  if (sharedPitchShiftEngine)
+    sharedPitchShiftEngine->value.store(engine);
+  else
+    pitchShiftEngine = engine;
+  if (incrementalSynth)
+    incrementalSynth->setPitchShiftEngine(engine);
+}
+
+PitchShiftEngine EditorController::getPitchShiftEngine() const
+{
+  return sharedPitchShiftEngine ? sharedPitchShiftEngine->value.load()
+                                : pitchShiftEngine;
+}
+
+void EditorController::sharePitchShiftEngine(
+    std::shared_ptr<PitchShiftEnginePreference> shared)
+{
+  sharedPitchShiftEngine = std::move(shared);
+  if (incrementalSynth)
+    incrementalSynth->setPitchShiftEngine(getPitchShiftEngine());
 }
 
 void EditorController::requestShutdown()

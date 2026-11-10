@@ -80,6 +80,15 @@ target_link_libraries(AraProjectSyncGuardTests PRIVATE pitchnet_core)
 target_compile_features(AraProjectSyncGuardTests PRIVATE cxx_std_17)
 add_test(NAME AraProjectSyncGuardTests COMMAND AraProjectSyncGuardTests)
 
+# Batch 4 pitch-shift engines: real-signal renders at ratios
+# 0.5/1.0/2.0 must return the exact length with sane energy and the
+# fundamental actually moved. Links pitchnet_core, which carries both
+# engines (Rubber Band as its static library, Signalsmith header-only).
+add_executable(PitchShiftEngineTests PitchShiftEngineTests.cpp)
+target_link_libraries(PitchShiftEngineTests PRIVATE pitchnet_core)
+target_compile_features(PitchShiftEngineTests PRIVATE cxx_std_17)
+add_test(NAME PitchShiftEngineTests COMMAND PitchShiftEngineTests)
+
 add_executable(PlatformPathsTests PlatformPathsTests.cpp)
 target_link_libraries(PlatformPathsTests PRIVATE pitchnet_core)
 target_compile_features(PlatformPathsTests PRIVATE cxx_std_17)

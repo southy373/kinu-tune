@@ -448,11 +448,62 @@ target_sources(PitchNetPlugin PRIVATE
     ${PLUGIN_SOURCES}
     )
 
+# Rubber Band Library 4.0.0 (batch 4 pitch-shift engine; vendored under
+# third_party/rubberband, see its VENDORED.md). Built with the library's
+# own built-in FFT and built-in BQ resampler on every platform: that is
+# the upstream "auto" fallback and keeps FFTW (and its GPL/commercial
+# layer), KissFFT, SLEEF, libsamplerate and Speex out of the build.
+# Licence: GPL-2.0-or-later, compatible with the AGPL host.
+add_library(rubberband STATIC
+    third_party/rubberband/src/RubberBandStretcher.cpp
+    third_party/rubberband/src/RubberBandLiveShifter.cpp
+    third_party/rubberband/src/faster/AudioCurveCalculator.cpp
+    third_party/rubberband/src/faster/CompoundAudioCurve.cpp
+    third_party/rubberband/src/faster/HighFrequencyAudioCurve.cpp
+    third_party/rubberband/src/faster/SilentAudioCurve.cpp
+    third_party/rubberband/src/faster/PercussiveAudioCurve.cpp
+    third_party/rubberband/src/faster/R2Stretcher.cpp
+    third_party/rubberband/src/faster/StretcherChannelData.cpp
+    third_party/rubberband/src/faster/StretcherProcess.cpp
+    third_party/rubberband/src/finer/R3Stretcher.cpp
+    third_party/rubberband/src/finer/R3LiveShifter.cpp
+    third_party/rubberband/src/common/Allocators.cpp
+    third_party/rubberband/src/common/BQResampler.cpp
+    third_party/rubberband/src/common/FFT.cpp
+    third_party/rubberband/src/common/Log.cpp
+    third_party/rubberband/src/common/Profiler.cpp
+    third_party/rubberband/src/common/Resampler.cpp
+    third_party/rubberband/src/common/StretchCalculator.cpp
+    third_party/rubberband/src/common/Thread.cpp
+    third_party/rubberband/src/common/mathmisc.cpp
+    third_party/rubberband/src/common/sysutils.cpp)
+target_include_directories(rubberband PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/rubberband)
+target_compile_definitions(rubberband PRIVATE
+    USE_BUILTIN_FFT USE_BQRESAMPLER)
+if(WIN32)
+    target_compile_definitions(rubberband PRIVATE NOMINMAX _USE_MATH_DEFINES)
+else()
+    target_compile_definitions(rubberband PRIVATE USE_PTHREADS HAVE_POSIX_MEMALIGN)
+    target_link_libraries(rubberband PRIVATE pthread)
+endif()
+# Vendored code: keep the project's warning flags for our own sources
+# and silence warnings inside the library build only.
+if(MSVC)
+    target_compile_options(rubberband PRIVATE /W0)
+else()
+    target_compile_options(rubberband PRIVATE -w)
+endif()
+
 # Core/UI libraries (stage 1 modularization)
 add_library(pitchnet_core STATIC ${PITCHNET_CORE_SOURCES})
 add_library(pitchnet_ui STATIC ${PITCHNET_UI_SOURCES})
 
 target_include_directories(pitchnet_core PRIVATE ${R8BRAIN_INCLUDE_DIR})
+# Signalsmith Stretch 1.4.0 (batch 4 pitch-shift engine) is header-only;
+# its include root also resolves its signalsmith-linear/ dependency.
+target_include_directories(pitchnet_core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/signalsmith-stretch)
 
 if(PITCHNET_SYNTH_NOTE_DIAGNOSTICS)
     target_compile_definitions(pitchnet_core PUBLIC PITCHNET_SYNTH_NOTE_DIAGNOSTICS=1)
@@ -479,6 +530,7 @@ juce_add_binary_data(BinaryData SOURCES ${BINARY_DATA_FILES})
 
 target_link_libraries(pitchnet_core PUBLIC
     BinaryData
+    rubberband
     juce::juce_gui_basics
     juce::juce_gui_extra
     juce::juce_audio_basics

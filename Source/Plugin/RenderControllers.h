@@ -4,6 +4,7 @@
 #pragma once
 
 #include "../Audio/EditorController.h"
+#include "../Audio/Synthesis/PitchShiftEngine.h"
 #include "../Audio/SynthesisEngineType.h"
 
 #include <memory>
@@ -20,10 +21,12 @@
  * (rule render-controllers) fails the build when Source/Plugin constructs an
  * EditorController(false) outside this file.
  */
-inline std::unique_ptr<EditorController>
-makeSharedEngineController(std::shared_ptr<SynthesisEnginePreference> engine)
+inline std::unique_ptr<EditorController> makeSharedEngineController(
+    std::shared_ptr<SynthesisEnginePreference> engine,
+    std::shared_ptr<PitchShiftEnginePreference> pitchShiftEngine)
 {
   auto controller = std::make_unique<EditorController>(false);
   controller->shareSynthesisEngine(std::move(engine));
+  controller->sharePitchShiftEngine(std::move(pitchShiftEngine));
   return controller;
 }

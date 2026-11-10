@@ -394,9 +394,12 @@ private:
   // editor would show.
   std::shared_ptr<SynthesisEnginePreference> renderEngine =
       std::make_shared<SynthesisEnginePreference>();
+  // The pitch-shift engine shared the same way (batch 4).
+  std::shared_ptr<PitchShiftEnginePreference> renderPitchShiftEngine =
+      std::make_shared<PitchShiftEnginePreference>();
   std::unique_ptr<EditorController> makeRenderController() const
   {
-    return makeSharedEngineController(renderEngine);
+    return makeSharedEngineController(renderEngine, renderPitchShiftEngine);
   }
   std::unique_ptr<EditorController> araAnalysisController;
   std::unique_ptr<EditorController> araIncrementalAnalysisController;

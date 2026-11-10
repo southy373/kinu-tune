@@ -9,6 +9,7 @@
 #include "BigVGANVocoder.h"
 #include "GAMEDetector.h"
 #include "Synthesis/IncrementalSynthesizer.h"
+#include "Synthesis/PitchShiftEngine.h"
 #include "SynthesisEngineType.h"
 #include "Vocoder.h"
 #include "../Models/Project.h"
@@ -67,6 +68,16 @@ public:
   // From now on read and write the engine in @p shared instead of the own
   // member. Pass the same object to every controller of one plug-in instance.
   void shareSynthesisEngine(std::shared_ptr<SynthesisEnginePreference> shared);
+
+  // The pitch-shift stage's algorithm, shared across controllers in
+  // exactly the same way as the rendering engine above
+  // (PitchShiftEnginePreference). Independent of SynthesisEngineType:
+  // that one picks what rebuilds the shifted audio, this one picks how
+  // the pitch is moved.
+  void setPitchShiftEngine(PitchShiftEngine engine);
+  PitchShiftEngine getPitchShiftEngine() const;
+  void sharePitchShiftEngine(
+      std::shared_ptr<PitchShiftEnginePreference> shared);
 
   void setDeviceConfig(const juce::String &deviceName, int gpuDeviceId)
   {
@@ -144,6 +155,9 @@ private:
   // Own setting, read only while sharedSynthesisEngine is null.
   SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();
   std::shared_ptr<SynthesisEnginePreference> sharedSynthesisEngine;
+  // Own setting, read only while sharedPitchShiftEngine is null.
+  PitchShiftEngine pitchShiftEngine = PitchShiftEngine::Psola;
+  std::shared_ptr<PitchShiftEnginePreference> sharedPitchShiftEngine;
   juce::String device = "CPU";
   int deviceId = 0;
 

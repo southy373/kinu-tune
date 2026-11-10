@@ -628,6 +628,29 @@ void IncrementalSynthesizer::cancel() {
     cancelFlag->store(true);
 }
 
+void IncrementalSynthesizer::renderPitchShiftAsync(
+    DspSynthesisRequest request,
+    std::function<void(std::vector<float>)> onComplete,
+    std::shared_ptr<std::atomic<bool>> cancelFlag)
+{
+  switch (pitchShiftEngine)
+  {
+    case PitchShiftEngine::RubberBand:
+      rubberBand.renderAsync(std::move(request), std::move(onComplete),
+                             std::move(cancelFlag));
+      break;
+    case PitchShiftEngine::SignalsmithStretch:
+      signalsmithStretch.renderAsync(std::move(request),
+                                     std::move(onComplete),
+                                     std::move(cancelFlag));
+      break;
+    case PitchShiftEngine::Psola:
+      psola.renderAsync(std::move(request), std::move(onComplete),
+                        std::move(cancelFlag));
+      break;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // computeSynthesisRange: find voiced segments overlapping dirty range,
 // expand to include complete segments + padding.
@@ -1053,6 +1076,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
     LOG(juce::String("synthesizeRegion: engine=") +
         (usePsola ? "PSOLA" : useBigVgan ? "BigVGAN" : "Vocoder") +
+        "  pitchShift=" + pitchShiftEngineToString(pitchShiftEngine) +
         "  noteAnchors=" + (hasDirtyNoteAnchors ? "yes" : "NO") +
         "  dirtyNotes=" + juce::String(dirtyNoteCount) +
         "  f0Dirty=[" + juce::String(f0DirtyStart) + "," +
@@ -2215,17 +2239,18 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       };
 
   if (usePsola) {
-    psola.renderAsync(std::move(dspRequest), std::move(onRendered),
-                      capturedCancelFlag);
+    renderPitchShiftAsync(std::move(dspRequest), std::move(onRendered),
+                          capturedCancelFlag);
   } else if (useBigVgan) {
     // BigVGAN has no F0 input, so the edited pitch reaches it as audio:
-    // PSOLA renders the scratch waveform and BigVGAN regenerates it from
-    // its mel. The result rejoins through the same callback as every
-    // other engine, so blending and committing stay engine-agnostic.
+    // the selected pitch-shift engine renders the scratch waveform and
+    // BigVGAN regenerates it from its mel. The result rejoins through
+    // the same callback as every other engine, so blending and
+    // committing stay engine-agnostic.
     auto *bigVgan = bigVganVocoder;
     auto *synth = this;
     const int renderSampleRate = audioData.sampleRate;
-    psola.renderAsync(
+    renderPitchShiftAsync(
         std::move(dspRequest),
         [bigVgan, synth, renderSampleRate,
          onRendered = std::move(onRendered),

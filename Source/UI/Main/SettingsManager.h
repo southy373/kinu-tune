@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../Audio/PitchDetectorType.h"
+#include "../../Audio/Synthesis/PitchShiftEngine.h"
 #include "../../Audio/SynthesisEngineType.h"
 #include "../../Audio/Vocoder.h"
 #include "../../JuceHeader.h"
@@ -34,6 +35,8 @@ public:
   void setPitchDetectorType(PitchDetectorType t) { pitchDetectorType = t; }
   SynthesisEngineType getSynthesisEngineType() const { return synthesisEngineType; }
   void setSynthesisEngineType(SynthesisEngineType t) { synthesisEngineType = t; }
+  PitchShiftEngine getPitchShiftEngine() const { return pitchShiftEngine; }
+  void setPitchShiftEngine(PitchShiftEngine e) { pitchShiftEngine = e; }
   // Resolved, not raw: with nothing stored this is the provider's default
   // device, which is not always device 0 (see GpuDeviceList).
   int getGPUDeviceId() const;
@@ -138,6 +141,9 @@ private:
   int threads = 0;
   PitchDetectorType pitchDetectorType = PitchDetectorType::FCPE;
   SynthesisEngineType synthesisEngineType = defaultSynthesisEngineType();
+  // Batch 4: the pitch-shift stage's algorithm. Defaults to PSOLA, so
+  // settings written before the choice existed behave as they always did.
+  PitchShiftEngine pitchShiftEngine = PitchShiftEngine::Psola;
   int gpuDeviceId = 0;
   bool hasStoredGpuDeviceIdSetting = false;
   // "auto" follows the system language until the user picks one.

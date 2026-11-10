@@ -5,7 +5,10 @@
 #include "../BigVGANVocoder.h"
 #include "../SynthesisEngineType.h"
 #include "../Vocoder.h"
+#include "PitchShiftEngine.h"
 #include "PsolaSynthesizer.h"
+#include "RubberBandSynthesizer.h"
+#include "SignalsmithStretchSynthesizer.h"
 #include <atomic>
 #include <mutex>
 #include <string>
@@ -21,12 +24,14 @@
  *   unvoiced frames → original audio (preserves breathing)
  *
  * Two engines produce that synthesized audio. Vocoder regenerates the region
- * from its mel spectrogram; PsolaSynthesizer transforms the original waveform
- * instead. AI Resynthesis takes a third route to the same span: PSOLA first
- * renders the edited pitch into a scratch waveform and BigVGANVocoder
- * regenerates that waveform from its own mel, because BigVGAN has no F0
- * input to steer. Everything after the render - blending, splicing, the
- * audio move patches - is identical for all three.
+ * from its mel spectrogram; the classic path transforms the original waveform
+ * instead. AI Resynthesis takes a third route to the same span: the selected
+ * pitch-shift engine (PSOLA by default; Rubber Band or Signalsmith Stretch
+ * since batch 4 - see PitchShiftEngine) first renders the edited pitch into
+ * a scratch waveform and BigVGANVocoder regenerates that waveform from its
+ * own mel, because BigVGAN has no F0 input to steer. The classic path uses
+ * the same pitch-shift engine directly. Everything after the render -
+ * blending, splicing, the audio move patches - is identical for all three.
  */
 class IncrementalSynthesizer {
 public:
@@ -41,6 +46,16 @@ public:
   void setProject(Project *p) { project = p; }
   void setSynthesisEngine(SynthesisEngineType type) { synthesisEngine = type; }
   SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
+
+  // Which algorithm moves the pitch before the rebuild stage (batch
+  // 4). Applies both to the classic path and to the scratch render the
+  // BigVGAN path consumes; read at dispatch time, so a change lands on
+  // the next render like an engine change does.
+  void setPitchShiftEngine(PitchShiftEngine engine)
+  {
+    pitchShiftEngine = engine;
+  }
+  PitchShiftEngine getPitchShiftEngine() const { return pitchShiftEngine; }
 
   void synthesizeRegion(ProgressCallback onProgress,
                         CompleteCallback onComplete);
@@ -75,6 +90,14 @@ private:
 
   void setLastSynthesisError(std::string error);
 
+  // Run one request through the selected pitch-shift engine. Both
+  // dispatch sites (classic output, BigVGAN scratch) go through here
+  // so the choice can never apply to one path and not the other.
+  void renderPitchShiftAsync(
+      DspSynthesisRequest request,
+      std::function<void(std::vector<float>)> onComplete,
+      std::shared_ptr<std::atomic<bool>> cancelFlag);
+
   mutable std::mutex lastSynthesisErrorMutex;
   std::string lastSynthesisError;
 
@@ -82,7 +105,10 @@ private:
   BigVGANVocoder *bigVganVocoder = nullptr;
   Project *project = nullptr;
   SynthesisEngineType synthesisEngine = SynthesisEngineType::Vocoder;
+  PitchShiftEngine pitchShiftEngine = PitchShiftEngine::Psola;
   PsolaSynthesizer psola;
+  RubberBandSynthesizer rubberBand;
+  SignalsmithStretchSynthesizer signalsmithStretch;
 
   std::shared_ptr<std::atomic<bool>> cancelFlag;
   std::atomic<uint64_t> jobId{0};

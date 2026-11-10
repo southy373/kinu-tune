@@ -267,6 +267,7 @@ PitchNetAudioProcessor::PitchNetAudioProcessor()
     // opened (restoring a saved project) uses the engine the editor will show.
     SettingsManager savedSettings;
     renderEngine->value.store(savedSettings.getSynthesisEngineType());
+    renderPitchShiftEngine->value.store(savedSettings.getPitchShiftEngine());
   }
   araAnalysisController = makeRenderController();
   undoManager = std::make_unique<PitchUndoManager>(100);
