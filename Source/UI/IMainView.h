@@ -74,6 +74,11 @@ public:
   virtual bool hasAnalyzedProject() const = 0;
   virtual void bindRealtimeProcessor(RealtimePitchProcessor &processor) = 0;
   virtual juce::String serializeProjectJson() const = 0;
+  /** Batch 5.1: commit the view's current size into the project's
+      saved uiWidth/uiHeight. Called at persistence points (archive
+      serialisation, editor detach) instead of on every resize, so a
+      transient host-imposed size is not baked into the project. */
+  virtual void captureWindowSizeIntoProject() const {}
   virtual bool restoreProjectJson(const juce::String &json) = 0;
   virtual bool restoreProjectSnapshot(const Project &project) = 0;
   virtual void setStatusMessage(const juce::String &message) = 0;

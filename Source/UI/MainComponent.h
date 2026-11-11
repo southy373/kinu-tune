@@ -140,6 +140,7 @@ public:
   bool hasAnalyzedProject() const override;
   void bindRealtimeProcessor(RealtimePitchProcessor &processor) override;
   juce::String serializeProjectJson() const override;
+  void captureWindowSizeIntoProject() const override;
   bool restoreProjectJson(const juce::String &json) override;
   bool restoreProjectSnapshot(const Project &project) override;
   void setStatusMessage(const juce::String &message) override {
@@ -452,6 +453,10 @@ private:
   // True while a canvas click is switching the active region. The clicked
   // region is already on screen, so its project must not refit the view.
   bool regionActivationFromCanvas = false;
+  // Batch 5.1: restoreProjectPresentation may re-assert a project's
+  // saved window size only once per project bind (before its editor
+  // is first shown); content restores re-arm this flag.
+  bool presentationSizeAsserted = false;
   bool liveRecordingActive = false;
   bool pianoKeyAuditionActive = false;
   bool pianoKeyAuditionWasPlaying = false;

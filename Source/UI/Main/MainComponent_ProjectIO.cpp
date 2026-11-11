@@ -41,6 +41,9 @@ void MainComponent::openProjectFile(const juce::File &file) {
 
     pianoRoll.setProject(project);
     pianoRollView.setProject(project);
+    // Batch 5.1: newly loaded project content - its saved size may
+    // be asserted once (see restoreProjectPresentation).
+    presentationSizeAsserted = false;
     restoreProjectPresentation();
     parameterPanel.setProject(project);
     parameterPanel.setSelectedNote(nullptr);
@@ -185,6 +188,10 @@ void MainComponent::openProjectFile(const juce::File &file) {
 
                 safeThis->pianoRoll.setProject(project);
                 safeThis->pianoRollView.setProject(project);
+                // Batch 5.1: newly loaded project content - its
+                // saved size may be asserted once (see
+                // restoreProjectPresentation).
+                safeThis->presentationSizeAsserted = false;
                 safeThis->restoreProjectPresentation();
                 safeThis->parameterPanel.setProject(project);
                 safeThis->toolbar.setTotalTime(project->getAudioData().getDuration());

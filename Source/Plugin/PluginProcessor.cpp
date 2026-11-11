@@ -2195,6 +2195,10 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
   }
 #endif
   if (mainComponent != nullptr && mainComponent != mc) {
+    // Batch 5.1: editor detach is a persistence point - commit the
+    // final window size into the outgoing project before its state
+    // is written back (see MainComponent::captureWindowSizeIntoProject).
+    mainComponent->captureWindowSizeIntoProject();
     if (auto *project = mainComponent->getProject())
       updateProjectStateFromEditor(*project);
     viewportState = mainComponent->getViewportState();
@@ -3337,8 +3341,14 @@ bool PitchNetAudioProcessor::serializeAraRegionProject(
 
   const Project *project = nullptr;
   if (regionKey == activeRegionKey && canvasShowsActiveAraRegion &&
-      mainComponent != nullptr)
+      mainComponent != nullptr) {
+    // Batch 5.1: archiving is a persistence point - commit the
+    // editor's current window size into the canvas project first, so
+    // the archive carries the size as it stands at save time rather
+    // than whatever a past resize happened to leave behind.
+    mainComponent->captureWindowSizeIntoProject();
     project = mainComponent->getProject();
+  }
   if (project == nullptr) {
     const auto it = araRegions.find(regionKey);
     if (it != araRegions.end())

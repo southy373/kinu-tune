@@ -3,6 +3,7 @@
 #include "../Models/Project.h"
 #include "../Utils/AppLogger.h"
 #include "../Utils/Constants.h"
+#include "../Utils/UI/WindowSizing.h"
 #include "../Undo/ContextUndoAction.h"
 #include "../Undo/PitchUndoManager.h"
 
@@ -235,12 +236,33 @@ PitchNetAudioProcessorEditor::PitchNetAudioProcessorEditor(
 
   setupCallbacks();
 
+  // Batch 5.1 (window-size investigation): three changes to how the
+  // opening size is chosen.
+  //  - The project's saved size is adopted only when BOTH dimensions
+  //    meet the minimum (960x600, the WindowSizing constraints) - the
+  //    same adoption policy restoreProjectPresentation applies. A
+  //    smaller saved value (e.g. a transient host-imposed size that
+  //    got persisted) falls back to the default request instead of
+  //    being re-asserted forever.
+  //  - The plug-in's default request is the raw 1200x840, WITHOUT the
+  //    92%-of-display clamp getDefaultMainViewSize applies: the clamp
+  //    is computed against the primary display (the editor is not on
+  //    screen yet), so on the user's monitor layout it returned 780
+  //    for the height and the saved-size loop then made it permanent.
+  //    The host owns the frame; the limits below are what we declare.
+  //  - setResizeLimits declares the minimum to the host, like the
+  //    standalone window does; without it the host could hand us a
+  //    frame below the internal minimum and we silently accepted it.
+  const auto sizingConstraints = WindowSizing::Constraints();
   auto size = audioProcessor.getLastEditorSize();
   if (auto *project = mainView->getProject();
-      project && project->uiWidth > 0 && project->uiHeight > 0)
+      project && project->uiWidth >= sizingConstraints.minWidth &&
+      project->uiHeight >= sizingConstraints.minHeight)
     size = {project->uiWidth, project->uiHeight};
   if (size.x <= 0 || size.y <= 0)
-    size = getDefaultMainViewSize(this);
+    size = {WindowSizing::kDefaultWidth, WindowSizing::kDefaultHeight};
+  setResizeLimits(sizingConstraints.minWidth, sizingConstraints.minHeight,
+                  8192, 8192);
   setSize(size.x, size.y);
   setResizable(true, true);
 

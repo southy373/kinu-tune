@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "MainViewFactory.h"
 #include "GpuDeviceList.h"
 #include "Main/ExportHelper.h"
 #include "Main/MacMenuIconHelper.h"
@@ -1332,13 +1333,25 @@ void MainComponent::applyUiBrightness(double brightnessPercent)
   repaint();
 }
 
-void MainComponent::resized()
+void MainComponent::captureWindowSizeIntoProject() const
 {
-  if (auto *project = getProject(); project && getWidth() > 0 && getHeight() > 0)
+  // Batch 5.1: the ONLY writer of the project's saved window size,
+  // called at persistence points (saveProject, serializeProjectJson,
+  // region-archive serialisation, editor detach). resized() used to
+  // write on every resize, which baked whatever size the host or the
+  // creation clamp happened to produce into the project archive, and
+  // restoreProjectPresentation then re-asserted it on every bind -
+  // the loop that made a one-off small size permanent.
+  if (auto *project = getProject();
+      project && getWidth() > 0 && getHeight() > 0)
   {
     project->uiWidth = getWidth();
     project->uiHeight = getHeight();
   }
+}
+
+void MainComponent::resized()
+{
   auto bounds = getLocalBounds();
 
 #if !JUCE_MAC
@@ -1508,8 +1521,7 @@ void MainComponent::saveProject(bool saveAs)
   if (!project)
     return;
 
-  project->uiWidth = getWidth();
-  project->uiHeight = getHeight();
+  captureWindowSizeIntoProject();
 
   auto ensureAudioSha = [project]()
   {
@@ -3596,6 +3608,10 @@ void MainComponent::bindRealtimeProcessor(RealtimePitchProcessor &processor)
 
 juce::String MainComponent::serializeProjectJson() const
 {
+  // Batch 5.1: serialising for an archive is a persistence point -
+  // commit the current window size first (see
+  // captureWindowSizeIntoProject).
+  captureWindowSizeIntoProject();
   if (auto *project = getProject())
   {
     auto json = ProjectSerializer::toJson(*project);
@@ -3618,6 +3634,9 @@ bool MainComponent::restoreProjectJson(const juce::String &jsonString)
 
       pianoRoll.setProject(project);
       pianoRollView.setProject(project);
+      // Batch 5.1: new project content - its saved size may be
+      // asserted once (see restoreProjectPresentation).
+      presentationSizeAsserted = false;
       restoreProjectPresentation();
       parameterPanel.setProject(project);
       toolbar.setTotalTime(project->getAudioData().getDuration());
@@ -3646,6 +3665,9 @@ bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
       project->setMacroParameters(macroParameters);
     pianoRoll.setProject(project);
     pianoRollView.setProject(project);
+    // Batch 5.1: new project content - its saved size may be
+    // asserted once (see restoreProjectPresentation).
+    presentationSizeAsserted = false;
     restoreProjectPresentation();
     parameterPanel.setProject(project);
     toolbar.setTotalTime(project->getAudioData().getDuration());
@@ -4144,10 +4166,35 @@ void MainComponent::restoreProjectPresentation()
   pianoRollView.setOverviewVisible(project->thumbnailVisible);
   if (width <= 0 || height <= 0)
     return;
-  auto size = juce::Point<int>(width, height);
-  if (auto *display = WindowSizing::getDisplayForComponent(this))
-    size = WindowSizing::getClampedSize(width, height, *display,
-                                       WindowSizing::Constraints());
+  // Batch 5.1 (window-size investigation): the saved size is
+  // re-asserted only ONCE per project bind - before that project's
+  // editor is first shown. Later presentation restores for the same
+  // project (state re-reads, background snapshot pushes) must not
+  // yank the frame back to the saved size after the user resized it.
+  if (presentationSizeAsserted)
+    return;
+  presentationSizeAsserted = true;
+  // Adoption policy: the saved size is used only when BOTH dimensions
+  // meet the minimum (960x600). A smaller saved value - including a
+  // deliberately small working size - is NOT adopted; the default
+  // request stands instead. (The user's measured working size of
+  // about 930x752 falls under the width minimum, so from 5.1 their
+  // window opens at the default rather than at that size; that is
+  // the agreed line - a below-minimum frame leaves the piano roll
+  // too little room next to the fixed columns.)
+  const auto constraints = WindowSizing::Constraints();
+  juce::Point<int> size;
+  if (width >= constraints.minWidth && height >= constraints.minHeight)
+  {
+    size = {width, height};
+    if (auto *display = WindowSizing::getDisplayForComponent(this))
+      size = WindowSizing::getClampedSize(width, height, *display,
+                                          constraints);
+  }
+  else
+  {
+    size = getDefaultMainViewSize(this);
+  }
   if (auto *editor = findParentComponentOfClass<juce::AudioProcessorEditor>())
     editor->setSize(size.x, size.y);
   else if (auto *window = findParentComponentOfClass<juce::DocumentWindow>())
