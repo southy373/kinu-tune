@@ -1114,8 +1114,12 @@ MainComponent::exchangeProject(std::unique_ptr<Project> newProject)
     toolbar.setTransportEnabled(true);
     toolbar.setLoopEnabled(project->getLoopRange().enabled);
     applyCachedHostLoopRange();
-    if (hasAnalyzedProject() && !regionActivationFromCanvas && !pianoRoll.isTrackViewMode())
-      fitAnalyzedPitchRangeToView(*project);
+    // Batch 4 fix (0.4.2): binding an analyzed project no longer fits
+    // the vertical view to its pitch range. The vertical scale stays
+    // at the fixed default, or at the restored viewport when there is
+    // one - the same settlement as the abolished horizontal fit.
+    // fitAnalyzedPitchRangeToView() now runs only from explicit user
+    // actions (zoom-to-full, the vertical auto-zoom button).
   }
   repaint();
   return previousProject;
@@ -1745,7 +1749,8 @@ void MainComponent::analyzeAudio()
           return;
         safeThis->pianoRoll.setProject(&projectRef);
         safeThis->pianoRollView.setProject(&projectRef);
-        safeThis->fitAnalyzedPitchRangeToView(projectRef);
+        // Batch 4 fix (0.4.2): no automatic vertical fit when analysis
+        // completes (see exchangeProject).
         safeThis->pianoRoll.repaint();
 
         // Analysis may have fallen back to CPU inference and taken the
@@ -1801,6 +1806,12 @@ void MainComponent::zoomToFull()
   fitAnalyzedPitchRangeToView(*project);
 }
 
+// Batch 4 fix (0.4.2): invoked only from explicit user actions -
+// zoomToFull() and the vertical auto-zoom button (onAutoZoomRequested).
+// The automatic callers (project bind, analysis completion, project
+// load and snapshot restore) were removed, so the vertical view opens
+// with the restored viewport or the fixed default scale instead of
+// being refitted to the content's pitch range.
 void MainComponent::fitAnalyzedPitchRangeToView(Project &project)
 {
   float minMidi = std::numeric_limits<float>::max();
@@ -3185,7 +3196,8 @@ void MainComponent::setHostAudio(const juce::AudioBuffer<float> &buffer,
         safeThis->toolbar.setTransportEnabled(true);
         safeThis->applyCachedHostLoopRange();
 
-        safeThis->fitAnalyzedPitchRangeToView(*project);
+        // Batch 4 fix (0.4.2): no automatic vertical fit when host
+        // audio analysis completes (see exchangeProject).
 
         auto *vocoder = safeThis->editorController
                             ? safeThis->editorController->getVocoder()
@@ -3612,8 +3624,8 @@ bool MainComponent::restoreProjectJson(const juce::String &jsonString)
       toolbar.setTransportEnabled(true);
       toolbar.setLoopEnabled(project->getLoopRange().enabled);
       applyCachedHostLoopRange();
-      if (hasAnalyzedProject())
-        fitAnalyzedPitchRangeToView(*project);
+      // Batch 4 fix (0.4.2): no automatic vertical fit on project
+      // load; the restored viewport (or the fixed default) stands.
       repaint();
       notifyProjectDataChanged();
       return true;
@@ -3640,8 +3652,8 @@ bool MainComponent::restoreProjectSnapshot(const Project &snapshot)
     toolbar.setTransportEnabled(true);
     toolbar.setLoopEnabled(project->getLoopRange().enabled);
     applyCachedHostLoopRange();
-    if (hasAnalyzedProject())
-      fitAnalyzedPitchRangeToView(*project);
+    // Batch 4 fix (0.4.2): no automatic vertical fit on snapshot
+    // restore; the restored viewport (or the fixed default) stands.
     repaint();
     notifyProjectDataChanged();
     return true;

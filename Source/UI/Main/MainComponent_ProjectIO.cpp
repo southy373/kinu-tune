@@ -64,8 +64,8 @@ void MainComponent::openProjectFile(const juce::File &file) {
       }
     }
 
-    if (hasAnalyzedProject())
-      fitAnalyzedPitchRangeToView(*project);
+    // Batch 4 fix (0.4.2): no automatic vertical fit when opening an
+    // analyzed project (see MainComponent::exchangeProject).
     repaint();
     if (isPluginMode())
       notifyProjectDataChanged();
@@ -417,7 +417,8 @@ void MainComponent::loadAudioFile(const juce::File &file) {
           }
         }
 
-        safeThis->fitAnalyzedPitchRangeToView(*project);
+        // Batch 4 fix (0.4.2): no automatic vertical fit when audio
+        // loading completes (see MainComponent::exchangeProject).
 
         if (auto *vocoder = safeThis->editorController
                                 ? safeThis->editorController->getVocoder()
