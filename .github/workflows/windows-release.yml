@@ -71,7 +71,12 @@ jobs:
       - name: Configure
         env:
           DEV_BUILD: ${{ inputs.ref != '' }}
-        run: cmake -B build -DUSE_DIRECTML=ON -DUSE_BUNDLED_DIRECTML_RUNTIME=ON -DPITCHNET_DEV_BUILD=$env:DEV_BUILD -DPITCHNET_ARA_DIAGNOSTICS=OFF -DPITCHNET_BUILD_TESTS=OFF
+        # Batch 5.1 trial measure: ARA diagnostics are ON in release
+        # builds for now, so a reproduction session leaves an [ARA] log
+        # (%APPDATA%/FlexaTune/Logs/debug_<session>.log) that can be
+        # collected afterwards. Revert to OFF once the publish/origin
+        # issues are closed out.
+        run: cmake -B build -DUSE_DIRECTML=ON -DUSE_BUNDLED_DIRECTML_RUNTIME=ON -DPITCHNET_DEV_BUILD=$env:DEV_BUILD -DPITCHNET_ARA_DIAGNOSTICS=ON -DPITCHNET_BUILD_TESTS=OFF
 
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel

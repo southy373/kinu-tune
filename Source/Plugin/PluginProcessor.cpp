@@ -551,6 +551,15 @@ void PitchNetAudioProcessor::checkParameterChanges() {
         changed = true;
       }
 
+      // Batch 5.1 diagnostics: host-side parameter write-back into
+      // the project. With the project-as-master rule this now only
+      // fires for genuine host automation / generic-UI moves; a line
+      // appearing right after a fader move would mean the APVTS
+      // mirror push did not happen.
+      ARA_DIAG("apvtsWriteback po=" + juce::String(po, 3) +
+               " fs=" + juce::String(fs, 3) +
+               " applied=" + juce::String(changed ? 1 : 0));
+
       // Trigger re-synthesis if values actually changed
       if (changed) {
         view->triggerResynthesis();
@@ -1537,8 +1546,22 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                     projectArchive.getData(), projectArchive.getSize());
             }
 
-            if (renderModification != nullptr &&
-                projectHasRegionEdits(*renderedProject) &&
+            // Batch 5.1 diagnostics: record the publish-gate inputs
+            // and verdict alongside the publish/clear line below, so
+            // a "my edit did not apply" report can be read straight
+            // off the log.
+            const bool gateEdits = projectHasRegionEdits(*renderedProject);
+            ARA_DIAG("gate[render] key=" + renderRegionKey +
+                     " pitchPct=" +
+                     juce::String(renderedProject->getPitchPercent(), 1) +
+                     " lenPct=" +
+                     juce::String(renderedProject->getLengthPercent(), 1) +
+                     " fs=" +
+                     juce::String(renderedProject->getFormantShift(), 3) +
+                     " po=" +
+                     juce::String(renderedProject->getGlobalPitchOffset(), 3) +
+                     " edits=" + juce::String(gateEdits ? 1 : 0));
+            if (renderModification != nullptr && gateEdits &&
                 audioData.waveform.getNumSamples() > 0) {
               const double processedRate =
                   audioData.sampleRate > 0
@@ -1785,7 +1808,17 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
     // persistence, timeline clips) reflects the edit instead of the
     // analysis-time audio. Only for regions that were actually CHANGED —
     // an unedited region stores nothing and keeps playing its original source.
-    if (activeModification != nullptr && projectHasRegionEdits(stateProject)) {
+    // Batch 5.1 diagnostics: the gate inputs and verdict, mirroring
+    // gate[render] on the render-completion path.
+    const bool editGateEdits = projectHasRegionEdits(stateProject);
+    ARA_DIAG("gate[edit] key=" + activeRegionKey +
+             " pitchPct=" + juce::String(stateProject.getPitchPercent(), 1) +
+             " lenPct=" + juce::String(stateProject.getLengthPercent(), 1) +
+             " fs=" + juce::String(stateProject.getFormantShift(), 3) +
+             " po=" +
+             juce::String(stateProject.getGlobalPitchOffset(), 3) +
+             " edits=" + juce::String(editGateEdits ? 1 : 0));
+    if (activeModification != nullptr && editGateEdits) {
       const auto &processed = stateProject.getAudioData().waveform;
       const double processedRate =
           stateProject.getAudioData().sampleRate > 0
@@ -2617,8 +2650,9 @@ const Project *PitchNetAudioProcessor::getAraProjectForPreview(
     juce::int64 start = 0;
     // Batch 5: the saved render is the project's window, published at
     // the window origin - accept it only when it starts exactly there.
-    if (modification->copyProcessedAudio(processed, rate, start) &&
-        start == audio.modificationOriginSamples) {
+    const bool hasSavedRender =
+        modification->copyProcessedAudio(processed, rate, start);
+    if (hasSavedRender && start == audio.modificationOriginSamples) {
       const double projectRate = audio.sampleRate > 0 ? audio.sampleRate : rate;
       if (juce::approximatelyEqual(rate, projectRate))
         audio.waveform.makeCopyOf(processed);
@@ -2626,6 +2660,16 @@ const Project *PitchNetAudioProcessor::getAraProjectForPreview(
         audio.waveform = AudioResampler::resample(processed, rate, projectRate);
       audio.sampleRate = juce::roundToInt(projectRate);
       ++it->second.revision;
+      // Batch 5.1 diagnostics: preview saved-render outcome.
+      ARA_DIAG("previewSavedRender key=" + modificationKey +
+               " accepted=1 start=" + juce::String(start));
+    } else {
+      ARA_DIAG("previewSavedRender key=" + modificationKey +
+               " accepted=0 reason=" +
+               (!hasSavedRender ? juce::String("noSavedRender")
+                                : juce::String("startMismatch")) +
+               " start=" + juce::String(start) + " origin=" +
+               juce::String(audio.modificationOriginSamples));
     }
   }
   revision = it->second.revision;
@@ -3469,6 +3513,24 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
         } else {
           audioData.waveform.makeCopyOf(processedAudio);
         }
+        // Batch 5.1 diagnostics: saved-render hydration outcome.
+        ARA_DIAG("hydrateSavedRender key=" + regionKey + " accepted=1" +
+                 " start=" + juce::String(processedStartInModification) +
+                 " samples=" + juce::String(processedAudio.getNumSamples()));
+      } else {
+        // Batch 5.1 diagnostics: the saved render was NOT accepted
+        // and the pristine slice stands - record why, since this is
+        // one of the silent fallbacks behind "my edits did not play".
+        ARA_DIAG("hydrateSavedRender key=" + regionKey + " accepted=0" +
+                 " reason=" +
+                 (!hasProcessedAudio
+                      ? juce::String("noSavedRender")
+                      : processedAudio.getNumSamples() <= 0
+                            ? juce::String("emptySavedRender")
+                            : juce::String("startMismatch")) +
+                 " start=" + juce::String(processedStartInModification) +
+                 " origin=" +
+                 juce::String(audioData.modificationOriginSamples));
       }
     }
   }
