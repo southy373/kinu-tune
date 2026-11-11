@@ -37,7 +37,7 @@ void testMatchingIdentitiesAreAccepted() {
   std::cout << "matching identities accepted: ok\n";
 }
 
-void testEachKnownFieldMismatchRefuses() {
+void testContentFieldMismatchRefuses() {
   const auto stored = fullIdentity();
 
   auto byLength = fullIdentity();
@@ -51,12 +51,55 @@ void testEachKnownFieldMismatchRefuses() {
   CHECK(araSourceIdentityMismatch(stored, byFingerprint, &field));
   CHECK(field == "fingerprint");
 
+  std::cout << "content field mismatch refuses: ok\n";
+}
+
+void testSourceIdOnlyMismatchIsAccepted() {
+  // Review B1: the persistent ID is recorded and logged, but an
+  // ID-only difference never refuses - hosts may rewrite persistent
+  // IDs across saves, so it cannot distinguish a hostile
+  // re-presentation from a legitimate restore of the same source.
+  const auto stored = fullIdentity();
   auto bySourceId = fullIdentity();
   bySourceId.sourceId = "source-xyz";
-  CHECK(araSourceIdentityMismatch(stored, bySourceId, &field));
-  CHECK(field == "sourceId");
+  juce::String field;
+  CHECK(!araSourceIdentityMismatch(stored, bySourceId, &field));
 
-  std::cout << "each known field mismatch refuses: ok\n";
+  std::cout << "sourceId-only mismatch accepted: ok\n";
+}
+
+void testFingerprintRelativeTolerance() {
+  // Review M4: the fingerprint comparison is relative (1e-6 of the
+  // larger magnitude), not the old absolute 1e-9 - at fingerprint
+  // magnitudes (~1e6..1e8) the absolute threshold sat at/below one
+  // double ULP and demanded bit-exact reads.
+  const auto withFingerprint = [](double fp) {
+    AraSourceIdentity identity;
+    identity.sampleCount = 441000;
+    identity.fingerprint = fp;
+    identity.hasFingerprint = true;
+    return identity;
+  };
+
+  juce::String field;
+  // Top of the range (~1e8): +50 is 5e-7 relative - within
+  // tolerance, accepted.
+  CHECK(!araSourceIdentityMismatch(withFingerprint(1.0e8),
+                                   withFingerprint(1.0e8 + 50.0), &field));
+  // +200 is 2e-6 relative - beyond tolerance, refused.
+  CHECK(araSourceIdentityMismatch(withFingerprint(1.0e8),
+                                  withFingerprint(1.0e8 + 200.0), &field));
+  CHECK(field == "fingerprint");
+  // Negative fingerprints compare by magnitude the same way.
+  CHECK(!araSourceIdentityMismatch(withFingerprint(-1.0e8),
+                                   withFingerprint(-1.0e8 - 50.0), &field));
+  // Moderate magnitude (~1e6): +0.5 accepted, +2 refused.
+  CHECK(!araSourceIdentityMismatch(withFingerprint(1.0e6),
+                                   withFingerprint(1.0e6 + 0.5), &field));
+  CHECK(araSourceIdentityMismatch(withFingerprint(1.0e6),
+                                  withFingerprint(1.0e6 + 2.0), &field));
+
+  std::cout << "fingerprint relative tolerance: ok\n";
 }
 
 void testUnknownFieldsNeverRefuse() {
@@ -115,7 +158,9 @@ void testStreamCodecRoundTrips() {
 
 int main() {
   testMatchingIdentitiesAreAccepted();
-  testEachKnownFieldMismatchRefuses();
+  testContentFieldMismatchRefuses();
+  testSourceIdOnlyMismatchIsAccepted();
+  testFingerprintRelativeTolerance();
   testUnknownFieldsNeverRefuse();
   testStreamCodecRoundTrips();
   std::cout << "Ara archive identity tests passed\n";

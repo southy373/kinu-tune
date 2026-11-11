@@ -2164,6 +2164,12 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
     if (auto *project = mainComponent->getProject()) {
       cachedPitchOffset = project->getGlobalPitchOffset();
       cachedFormantShift = project->getFormantShift();
+      // Batch 5.1 (item 4, review M2): mirror the APVTS push the
+      // binary restore path makes. Without it the caches match the
+      // restored project but the APVTS mirrors do not, and the next
+      // processBlock's checkParameterChanges would write the stale
+      // APVTS values back over the restored project.
+      syncApvtsGlobalsFromProject(*project);
       araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
       invalidateAraAnalysisProjectJson();
       publishPersistentProjectSnapshot(*project);
@@ -2562,6 +2568,13 @@ void PitchNetAudioProcessor::setStateInformation(const void *data,
                               : araAnalysisController->getProject()) {
           cachedPitchOffset = project->getGlobalPitchOffset();
           cachedFormantShift = project->getFormantShift();
+          // Batch 5.1 (item 4, review M2): the versioned envelope
+          // restores the APVTS state from parametersXml BEFORE the
+          // project, so push the restored project's globals out to
+          // the mirrors too - otherwise they may hold the envelope's
+          // (or an older session's) values, and checkParameterChanges
+          // would write those back over the project.
+          syncApvtsGlobalsFromProject(*project);
         }
         return;
       }
@@ -2829,6 +2842,17 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       pushTimelineDisplayOffset();
       if (auto *shown = mainComponent->getProject())
         stampActiveRegionSpan(*shown);
+      // Batch 5.1 (item 4, review M1): the same bind-moment sync the
+      // show path performs - the newly shown project's globals are
+      // the masters, so align the caches and the APVTS mirrors with
+      // them on this direct exchange branch too, instead of leaving
+      // the previously shown clip's values in place until the next
+      // edit notification or bind.
+      if (auto *shown = mainComponent->getProject()) {
+        cachedPitchOffset = shown->getGlobalPitchOffset();
+        cachedFormantShift = shown->getFormantShift();
+        syncApvtsGlobalsFromProject(*shown);
+      }
       mainComponent->bindRealtimeProcessor(realtimeProcessor);
       canvasShowsActiveAraRegion = true;
       mainComponent->hideAnalysisProgress();
