@@ -1466,6 +1466,36 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
               current->second.revision != renderRegionRevision) {
             if (target != nullptr) modificationRenders[renderRegionKey].pending.store(false);
             else regionCanvasRenderPendingRerun.store(false);
+            // Batch 5.1 recovery: up to 5.0 this return silently
+            // dropped the publish. When the region still exists, its
+            // revision only moved because a newer project was
+            // installed (host split / restore / hydration), so the
+            // render that just finished is stale - but nothing else
+            // re-renders the CURRENT project, and the last published
+            // audio stands indefinitely. Re-request a render of the
+            // current project so the latest state is what publishes.
+            // This cannot loop on its own: a further drop needs
+            // another external revision bump during the new render.
+            const Project *currentProject = nullptr;
+            if (current != araRegions.end()) {
+              if (renderRegionKey == activeRegionKey &&
+                  canvasShowsActiveAraRegion && mainComponent != nullptr)
+                currentProject = mainComponent->getProject();
+              if (currentProject == nullptr)
+                currentProject = current->second.project.get();
+            }
+            ARA_DIAG("revisionDrop key=" + renderRegionKey +
+                     " capturedRev=" + juce::String(renderRegionRevision) +
+                     " currentRev=" +
+                     (current == araRegions.end()
+                          ? juce::String("gone")
+                          : juce::String(current->second.revision)) +
+                     " recovered=" +
+                     juce::String(currentProject != nullptr ? 1 : 0));
+            if (currentProject != nullptr)
+              requestPluginProjectRender(
+                  *currentProject,
+                  target != nullptr ? renderModification : nullptr);
             return; // The host split/replaced this project's note and audio data.
           }
         }
