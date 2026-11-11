@@ -26,14 +26,14 @@ using SampleRange = juce::Range<int>;
 // Batch 5: the ARA analysis window. Analysis no longer reads the whole
 // modification: it reads the union of every playback region referencing
 // the modification, widened by this margin on both sides and clamped to
-// the source. The margin is an internal constant, not a user setting -
-// it exists so the pitch/segmentation context at a clip edge (and the
-// ~0.7s of render context an edit at the edge needs) sits comfortably
-// inside the analysed range, and so small host-side trims keep working
-// without a re-analysis. Five seconds is roughly seven times the render
-// context and far beyond the few hundred milliseconds where detection
-// near a hard cut is unreliable.
-inline constexpr double kAnalysisWindowMarginSeconds = 5.0;
+// the source. The margin is an internal constant, not a user setting.
+// Batch 5 shipped it at five seconds (context for pitch/segmentation
+// at the clip edges); the 0.5.0 trial verdict was that the extra range
+// is unwanted, so batch 5.1 sets it to zero - a fresh analysis covers
+// exactly the clip range. This only affects NEW analyses: a restored
+// project keeps the window recorded on it (see
+// getAraRegionProjectWindow), whatever margin it was analysed with.
+inline constexpr double kAnalysisWindowMarginSeconds = 0.0;
 
 // The window to read and analyse, in modification samples, for a region
 // union of [unionStart, unionEnd) within a source of sourceSampleCount

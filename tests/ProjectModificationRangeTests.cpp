@@ -230,39 +230,44 @@ void testPreserveHonoursBufferStartOffsets() {
 
 // Batch 5: the analysis window is the union of every playback region of a
 // modification, widened by the margin and clamped to the source.
-void testAnalysisWindowAppliesMargin() {
+// Batch 5.1 premise change: the margin is now zero (the 0.5.0 trial
+// verdict was that the +-5 s of extra range is unwanted), so a fresh
+// window is exactly the union - the clip range only. The three tests
+// below were rewritten from their margin-based expectations.
+void testAnalysisWindowIsTheUnionExactly() {
   const juce::int64 rate = 48000;
   const auto window = computeAnalysisWindowSamples(100 * rate, 110 * rate,
                                                    200 * rate, 48000.0);
-  CHECK(window.getStart() == 95 * rate);
-  CHECK(window.getEnd() == 115 * rate);
-  std::cout << "analysis window applies the margin: ok\n";
+  CHECK(window.getStart() == 100 * rate);
+  CHECK(window.getEnd() == 110 * rate);
+  std::cout << "analysis window is the region union exactly: ok\n";
 }
 
 void testAnalysisWindowClampsToSource() {
   const juce::int64 rate = 48000;
-  // Union starting 2 s in: the left margin is cut at the source start.
+  // A union that starts at the source start keeps that start.
   auto window =
-      computeAnalysisWindowSamples(2 * rate, 10 * rate, 200 * rate, 48000.0);
+      computeAnalysisWindowSamples(0, 10 * rate, 200 * rate, 48000.0);
   CHECK(window.getStart() == 0);
-  CHECK(window.getEnd() == 15 * rate);
-  // Union ending 3 s before the source end: the right margin is cut there.
-  window = computeAnalysisWindowSamples(190 * rate, 197 * rate, 200 * rate,
+  CHECK(window.getEnd() == 10 * rate);
+  // A union that ends at the source end keeps that end; nothing is
+  // ever widened past the source on either side.
+  window = computeAnalysisWindowSamples(190 * rate, 200 * rate, 200 * rate,
                                         48000.0);
-  CHECK(window.getStart() == 185 * rate);
+  CHECK(window.getStart() == 190 * rate);
   CHECK(window.getEnd() == 200 * rate);
   std::cout << "analysis window clamps to the source: ok\n";
 }
 
-void testAnalysisWindowCoversShortSource() {
+void testAnalysisWindowOnShortSourceIsTheUnion() {
   const juce::int64 rate = 48000;
-  // An 8 s source whose union sits mid-file: both 5 s margins overflow
-  // the source ends, so the window is the whole source.
+  // An 8 s source whose union sits mid-file: with no margin the window
+  // is the union, not the whole source (batch 5 widened it to both).
   const auto window =
       computeAnalysisWindowSamples(3 * rate, 5 * rate, 8 * rate, 48000.0);
-  CHECK(window.getStart() == 0);
-  CHECK(window.getEnd() == 8 * rate);
-  std::cout << "analysis window covers a short source whole: ok\n";
+  CHECK(window.getStart() == 3 * rate);
+  CHECK(window.getEnd() == 5 * rate);
+  std::cout << "analysis window on a short source is the union: ok\n";
 }
 
 // Batch 5.1: the display offset regression. A region that starts 10 s
@@ -323,9 +328,9 @@ int main() {
   testPreserveKeepsEditedSamplesAndRestoresTheRest();
   testDisplacedRangesCorruptTheEdit();
   testPreserveHonoursBufferStartOffsets();
-  testAnalysisWindowAppliesMargin();
+  testAnalysisWindowIsTheUnionExactly();
   testAnalysisWindowClampsToSource();
-  testAnalysisWindowCoversShortSource();
+  testAnalysisWindowOnShortSourceIsTheUnion();
   testProjectSpanShiftsByWindowOrigin();
   testAnalysisWindowRejectsEmptyUnion();
 
