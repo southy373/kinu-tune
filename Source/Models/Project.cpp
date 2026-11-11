@@ -465,7 +465,7 @@ int Project::getOutputFrameCount() const
     const int analysisFrames = audioData.getNumFrames();
     int result = analysisFrames;
 
-    const double k = static_cast<double>(macroParameters->lengthPercent) / 100.0;
+    const double k = static_cast<double>(lengthPercent) / 100.0;
     if (std::abs(k - 1.0) > 1.0e-9 && analysisFrames > 0)
     {
         const int anchor = getLengthAnchorFrame();
@@ -493,7 +493,7 @@ void Project::ensureLengthBase()
     // anchor frame is the same at any percent, so it divides out
     // exactly. (Projects saved by the pre-anchor build divide back with
     // a small one-time error bounded by the first segment's offset.)
-    const double k = static_cast<double>(macroParameters->lengthPercent) / 100.0;
+    const double k = static_cast<double>(lengthPercent) / 100.0;
     const int anchor = getLengthAnchorFrame();
     lengthBaseFrames.clear();
     lengthBaseFrames.reserve(notes.size());
@@ -548,7 +548,7 @@ void Project::scaleNotesForLengthPercent(float percent)
         note.markSynthDirty();
     }
 
-    macroParameters->lengthPercent = clamped;
+    lengthPercent = clamped;
     modified = true;
 
     PitchCurveProcessor::rebuildBaseFromNotes(*this);

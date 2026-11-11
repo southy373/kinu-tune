@@ -3571,6 +3571,10 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
 }
 
 void PitchNetAudioProcessor::attachMacroParameters(Project &project) {
+  // Batch 5.1: the shared macro carries only the editing environment
+  // (key / scale / snap / timeline display). The percent globals moved
+  // to Project members, so attaching no longer overwrites a project's
+  // own pitch/length percents with the previously shown clip's.
   if (!macroParameters->projectKeyInitialized && project.getMacroParameters()->projectKeyInitialized) {
     macroParameters->projectKeyRoot = project.getProjectKeyRoot();
     macroParameters->projectKeyMode = project.getProjectKeyMode();
@@ -3580,6 +3584,9 @@ void PitchNetAudioProcessor::attachMacroParameters(Project &project) {
 }
 
 void PitchNetAudioProcessor::adoptMacroParameters(Project &project) {
+  // Batch 5.1: same shrink as attach - adopting a restored project's
+  // macro adopts its editing environment only; its percent globals
+  // stay on the project itself and take effect as restored.
   if (const auto restored = project.getMacroParameters())
     *macroParameters = *restored;
   project.setMacroParameters(macroParameters);

@@ -164,12 +164,14 @@ struct MacroParameters
     double timelineTempoBpm = 120.0;
     TimelineGridDivision timelineGridDivision = TimelineGridDivision::Quarter;
     bool timelineSnapCycle = false;
-    // Batch 2 (U7): project-wide percent adjustments. pitchPercent scales
-    // the F0 of every voiced frame at synthesis time; lengthPercent scales
-    // every note's output frames (see Project::scaleNotesForLengthPercent).
-    // Both default to 100 (neutral) and are saved with the project.
-    float pitchPercent = 100.0f;
-    float lengthPercent = 100.0f;
+    // Batch 5.1: the Batch 2 percent adjustments (pitchPercent /
+    // lengthPercent) used to live here, which made them processor-wide
+    // in ARA: every region project shares one MacroParameters, so a
+    // new clip inherited the previous clip's percents and a restored
+    // project's own saved values were discarded on attach. They are
+    // Project members now (same rank as formantShift); this struct
+    // carries only the shared editing environment (key / scale / snap
+    // / timeline display).
 };
 
 /**
@@ -241,13 +243,13 @@ public:
     // Batch 2 (U7): project-wide pitch % (50-200, default 100). Applied as
     // one F0 ratio at synthesis time, so it is non-destructive: setting it
     // back to 100 restores the original rendering exactly.
-    float getPitchPercent() const { return macroParameters->pitchPercent; }
+    float getPitchPercent() const { return pitchPercent; }
     void setPitchPercent(float percent)
     {
         const float normalized = juce::jlimit(50.0f, 200.0f, percent);
-        if (std::abs(macroParameters->pitchPercent - normalized) > 0.0001f)
+        if (std::abs(pitchPercent - normalized) > 0.0001f)
         {
-            macroParameters->pitchPercent = normalized;
+            pitchPercent = normalized;
             modified = true;
         }
     }
@@ -256,13 +258,13 @@ public:
     // setter only stores the value (deserialization, undo bookkeeping);
     // scaleNotesForLengthPercent is the entry point that also moves the
     // notes' output frames.
-    float getLengthPercent() const { return macroParameters->lengthPercent; }
+    float getLengthPercent() const { return lengthPercent; }
     void setLengthPercent(float percent)
     {
         const float normalized = juce::jlimit(50.0f, 200.0f, percent);
-        if (std::abs(macroParameters->lengthPercent - normalized) > 0.0001f)
+        if (std::abs(lengthPercent - normalized) > 0.0001f)
         {
-            macroParameters->lengthPercent = normalized;
+            lengthPercent = normalized;
             modified = true;
         }
     }
@@ -416,6 +418,16 @@ private:
 
     float globalPitchOffset = 0.0f;
     float formantShift = 0.0f;
+    // Batch 5.1: per-project percent globals (Batch 2 U7), moved out of
+    // the shared MacroParameters so each ARA region owns its values
+    // and a restore makes the saved values effective. pitchPercent
+    // scales the F0 of every voiced frame at synthesis time;
+    // lengthPercent scales every note's output frames (see
+    // Project::scaleNotesForLengthPercent). Both default to 100
+    // (neutral) and are saved with the project, as the serializer
+    // already did when they lived in the macro struct.
+    float pitchPercent = 100.0f;
+    float lengthPercent = 100.0f;
     float volume = 0.0f; // dB
     float pitchCenter = 0.0f;
 
