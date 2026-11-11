@@ -100,9 +100,17 @@ public:
   /**
    * Synthesize a waveform from a BigVGAN mel spectrogram.
    * @param mel Mel spectrogram [T, 128] in BigVGAN's log scale (BigVGANMel)
+   * @param cancelFlag Optional cancellation flag (the async tasks' flag).
+   *        Checked at every chunk boundary; when set, inference stops at
+   *        the next boundary and returns empty - indistinguishably from a
+   *        failure for the caller, whose existing guards discard the
+   *        result, but lastError is left alone and the CPU fallback retry
+   *        is not entered (batch 5).
    * @return Synthesized waveform of T * hopSize samples, or empty on failure
    */
-  std::vector<float> infer(const std::vector<std::vector<float>> &mel);
+  std::vector<float> infer(
+      const std::vector<std::vector<float>> &mel,
+      std::shared_ptr<std::atomic<bool>> cancelFlag = nullptr);
 
   /**
    * Asynchronous infer() with callback on the message thread.
@@ -217,10 +225,13 @@ private:
   bool probeCurrentSession(std::string &error);
 
   // infer()'s chunk loop against the current session. Sets lastError on
-  // failure and returns empty; a shutdown mid-loop also returns empty
-  // but leaves lastError alone (infer() checks isShuttingDown first).
-  std::vector<float>
-  inferWithCurrentSession(const std::vector<std::vector<float>> &mel);
+  // failure and returns empty; a shutdown or a cancellation mid-loop
+  // also returns empty but leaves lastError alone (a cancelled render is
+  // superseded work being discarded, not a failure - and infer() must
+  // not mistake it for a DirectML failure and retry on the CPU).
+  std::vector<float> inferWithCurrentSession(
+      const std::vector<std::vector<float>> &mel,
+      const std::shared_ptr<std::atomic<bool>> &cancelFlag);
 
   // True when buildSessionOptions() appended the DirectML provider, so
   // the ladder knows the DirectML rungs are really on the GPU (and can

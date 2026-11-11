@@ -2231,8 +2231,21 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
           isBusy = false;
           juce::MessageManager::callAsync(
-              [capturedProject, onComplete]() {
-                capturedProject->clearAllDirty();
+              [capturedProject, capturedCancelFlag, onComplete]() {
+                // Batch 5: if this job was cancelled while it was
+                // applying, a newer edit is queued behind it (the
+                // EditorController gate turned it into a pendingRerun
+                // plus this cancel). That edit's dirty marks were set
+                // after this job captured its own set, and
+                // clearAllDirty() clears every note unconditionally -
+                // it would erase the newer edit's marks too, and the
+                // pending rerun would then find nothing dirty and
+                // never render it. Leave all marks in place instead:
+                // the rerun rebuilds from the original audio and the
+                // latest edit state, which subsumes this job's marks,
+                // so re-rendering them is harmless.
+                if (!capturedCancelFlag || !capturedCancelFlag->load())
+                  capturedProject->clearAllDirty();
                 if (onComplete) onComplete(true);
               });
         }).detach();

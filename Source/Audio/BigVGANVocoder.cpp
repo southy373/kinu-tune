@@ -524,8 +524,9 @@ bool BigVGANVocoder::establishSession()
 }
 #endif
 
-std::vector<float>
-BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
+std::vector<float> BigVGANVocoder::infer(
+    const std::vector<std::vector<float>> &mel,
+    std::shared_ptr<std::atomic<bool>> cancelFlag)
 {
   if (!loaded || mel.empty())
     return {};
@@ -543,7 +544,7 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
     return {};
   }
 
-  auto waveform = inferWithCurrentSession(mel);
+  auto waveform = inferWithCurrentSession(mel, cancelFlag);
   if (!waveform.empty())
   {
     // A successful render clears any earlier failure: lastError feeds
@@ -552,7 +553,15 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
     lastError.clear();
     return waveform;
   }
-  if (!usingGpuProvider || isShuttingDown.load())
+  // Batch 5: a cancelled inference is not a DirectML failure. Without
+  // this check the empty result would fall into the CPU retry below and
+  // the render the user just superseded would start over from the
+  // first chunk on the CPU - the exact stall cancellation exists to
+  // remove. The flag is re-checked here, immediately before the retry,
+  // so a cancel that lands while the GPU attempt is failing also stops
+  // the retry.
+  if (!usingGpuProvider || isShuttingDown.load() ||
+      (cancelFlag && cancelFlag->load()))
     return waveform;
 
   // Batch 3: inference-level CPU fallback. A DirectML session can be
@@ -591,10 +600,17 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
     return {};
   }
 
-  waveform = inferWithCurrentSession(mel);
+  // The retry honours the same cancel flag: a cancel that lands while
+  // the fallback session is being created stops the retry at its first
+  // chunk boundary instead of running the whole synthesis.
+  waveform = inferWithCurrentSession(mel, cancelFlag);
   if (waveform.empty())
+  {
+    if (cancelFlag && cancelFlag->load())
+      return waveform;
     lastError = "Inference failed on DirectML (" + gpuError +
                 ") and on CPU (" + lastError + ")";
+  }
   else
     lastError.clear();
   return waveform;
@@ -606,7 +622,8 @@ BigVGANVocoder::infer(const std::vector<std::vector<float>> &mel)
 
 #ifdef HAVE_ONNXRUNTIME
 std::vector<float> BigVGANVocoder::inferWithCurrentSession(
-    const std::vector<std::vector<float>> &mel)
+    const std::vector<std::vector<float>> &mel,
+    const std::shared_ptr<std::atomic<bool>> &cancelFlag)
 {
   const size_t numFrames = mel.size();
   const size_t totalSamples = numFrames * static_cast<size_t>(hopSize);
@@ -622,6 +639,23 @@ std::vector<float> BigVGANVocoder::inferWithCurrentSession(
     {
       if (isShuttingDown.load())
         return {};
+
+      // Batch 5: honour the job's cancel flag at chunk boundaries.
+      // Until now the loop only watched the shutdown flag, so a
+      // superseded AI render ran every remaining chunk to completion
+      // while the newer edit (or Undo, or engine switch) waited behind
+      // it. A cancelled chunk's Run() has already finished normally,
+      // so the session stays usable; the partial waveform is dropped
+      // by returning empty, exactly like a failure, but lastError is
+      // NOT set - infer() distinguishes the two through the flag and
+      // skips its CPU retry for a cancel.
+      if (cancelFlag && cancelFlag->load())
+      {
+        log("BigVGAN infer cancelled at frame " +
+            std::to_string(chunkStart) + " of " +
+            std::to_string(numFrames));
+        return {};
+      }
 
       const size_t chunkEnd = std::min(chunkStart + kChunkFrames, numFrames);
       const size_t inStart =
@@ -846,7 +880,7 @@ void BigVGANVocoder::inferFromWaveformAsync(
 std::vector<float> BigVGANVocoder::runTask(AsyncTask &task)
 {
   if (task.kind == AsyncTask::Kind::Mel)
-    return infer(task.mel);
+    return infer(task.mel, task.cancelFlag);
 
   // Waveform task: convert the scratch render to a BigVGAN mel, then infer.
   if (task.waveform.empty())
@@ -885,5 +919,8 @@ std::vector<float> BigVGANVocoder::runTask(AsyncTask &task)
   if (mel.empty())
     return {};
 
-  return infer(mel);
+  if (task.cancelFlag && task.cancelFlag->load())
+    return {};
+
+  return infer(mel, task.cancelFlag);
 }
