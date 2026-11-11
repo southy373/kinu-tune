@@ -1341,8 +1341,8 @@ void PitchNetAudioProcessorEditor::activateAraRegion(
 
   audioProcessor.setActiveAraRegion(target);
   if (focusView) {
-    // The canvas is in modification time; the region's host position is not.
-    const auto span = audioProcessor.activeRegionSpanInModificationTime();
+    // The canvas is in project time; the region's host position is not.
+    const auto span = audioProcessor.activeRegionSpanInProjectTime();
     mainView->focusTimelineRange(span.first, span.second);
   }
 
@@ -1434,8 +1434,8 @@ void PitchNetAudioProcessorEditor::onNewSelection(
       }
     }
     audioProcessor.setActiveAraRegion(target);
-    // The canvas is in modification time; the region's host position is not.
-    const auto span = audioProcessor.activeRegionSpanInModificationTime();
+    // The canvas is in project time; the region's host position is not.
+    const auto span = audioProcessor.activeRegionSpanInProjectTime();
     mainView->focusTimelineRange(span.first, span.second);
   }
 

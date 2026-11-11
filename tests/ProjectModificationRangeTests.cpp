@@ -228,6 +228,51 @@ void testPreserveHonoursBufferStartOffsets() {
   std::cout << "preserve honours differing buffer start offsets: ok\n";
 }
 
+// Batch 5: the analysis window is the union of every playback region of a
+// modification, widened by the margin and clamped to the source.
+void testAnalysisWindowAppliesMargin() {
+  const juce::int64 rate = 48000;
+  const auto window = computeAnalysisWindowSamples(100 * rate, 110 * rate,
+                                                   200 * rate, 48000.0);
+  CHECK(window.getStart() == 95 * rate);
+  CHECK(window.getEnd() == 115 * rate);
+  std::cout << "analysis window applies the margin: ok\n";
+}
+
+void testAnalysisWindowClampsToSource() {
+  const juce::int64 rate = 48000;
+  // Union starting 2 s in: the left margin is cut at the source start.
+  auto window =
+      computeAnalysisWindowSamples(2 * rate, 10 * rate, 200 * rate, 48000.0);
+  CHECK(window.getStart() == 0);
+  CHECK(window.getEnd() == 15 * rate);
+  // Union ending 3 s before the source end: the right margin is cut there.
+  window = computeAnalysisWindowSamples(190 * rate, 197 * rate, 200 * rate,
+                                        48000.0);
+  CHECK(window.getStart() == 185 * rate);
+  CHECK(window.getEnd() == 200 * rate);
+  std::cout << "analysis window clamps to the source: ok\n";
+}
+
+void testAnalysisWindowCoversShortSource() {
+  const juce::int64 rate = 48000;
+  // An 8 s source whose union sits mid-file: both 5 s margins overflow
+  // the source ends, so the window is the whole source.
+  const auto window =
+      computeAnalysisWindowSamples(3 * rate, 5 * rate, 8 * rate, 48000.0);
+  CHECK(window.getStart() == 0);
+  CHECK(window.getEnd() == 8 * rate);
+  std::cout << "analysis window covers a short source whole: ok\n";
+}
+
+void testAnalysisWindowRejectsEmptyUnion() {
+  CHECK(computeAnalysisWindowSamples(100, 100, 9600000, 48000.0).getLength() ==
+        0);
+  CHECK(computeAnalysisWindowSamples(0, 100, 0, 48000.0).getLength() == 0);
+  CHECK(computeAnalysisWindowSamples(0, 100, 9600000, 0.0).getLength() == 0);
+  std::cout << "analysis window rejects an empty union: ok\n";
+}
+
 } // namespace
 
 int main() {
@@ -238,6 +283,10 @@ int main() {
   testPreserveKeepsEditedSamplesAndRestoresTheRest();
   testDisplacedRangesCorruptTheEdit();
   testPreserveHonoursBufferStartOffsets();
+  testAnalysisWindowAppliesMargin();
+  testAnalysisWindowClampsToSource();
+  testAnalysisWindowCoversShortSource();
+  testAnalysisWindowRejectsEmptyUnion();
 
   std::cout << "ProjectModificationRangeTests passed\n";
   return 0;

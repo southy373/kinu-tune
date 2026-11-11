@@ -22,7 +22,18 @@
 #include <limits>
 
 namespace {
-// The project is stored in modification time and spans the whole modification.
+// Batch 5: where a project's analysis window starts, in seconds of
+// modification time. Zero for whole-modification projects (origin zero
+// or no source rate recorded), where project time IS modification time.
+double modificationOriginSeconds(const AudioData &audioData) {
+  return audioData.modificationSourceSampleRate > 0.0
+             ? static_cast<double>(audioData.modificationOriginSamples) /
+                   audioData.modificationSourceSampleRate
+             : 0.0;
+}
+
+// The project is stored in modification time, spanning its analysis
+// window of the modification (the whole modification before batch 5).
 // A region move must therefore change only which span is highlighted - never
 // timelineOffsetSeconds, which would pad the synthesised waveform with leading
 // silence and shift every published sample.
@@ -37,8 +48,14 @@ void stampSpanInModificationTime(Project &project,
     return;
   }
 
+  // Callers speak modification samples; the stamped ranges live in
+  // project time, whose zero is the window start. Convert through the
+  // recorded origin (zero for whole-modification projects, where the
+  // two grids coincide).
   const double start =
-      static_cast<double>(startSampleInModification) / modificationRate;
+      static_cast<double>(startSampleInModification -
+                          audioData.modificationOriginSamples) /
+      modificationRate;
 
   // Clamp to the audio that actually exists. The span marks which part of the
   // modification this region covers; it must never claim content past the end
@@ -49,11 +66,12 @@ void stampSpanInModificationTime(Project &project,
   double end = start + lengthSeconds;
   if (duration > 0.0)
     end = std::min(end, duration);
-  if (end <= start) {
+  const double clampedStart = std::max(0.0, start);
+  if (end <= clampedStart) {
     audioData.playbackRegionRanges.clear();
     return;
   }
-  audioData.playbackRegionRanges = {{start, end}};
+  audioData.playbackRegionRanges = {{clampedStart, end}};
 }
 
 #if JucePlugin_Enable_ARA
@@ -1402,7 +1420,14 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
   const auto renderRegionRevision =
       renderActiveAraRegion ? araRegions[renderRegionKey].revision : 0;
   auto *renderModification = target != nullptr ? target : activeModification;
-  const auto renderStartSampleInModification = target != nullptr ? 0 : activeStartSampleInModification;
+  // Batch 5: a targeted (background) render stamps the span of the
+  // project it rendered, whose grid starts at its analysis window's
+  // origin - not at the modification start. The active-region render
+  // keeps stamping from the live region's own start.
+  const auto renderStartSampleInModification =
+      target != nullptr
+          ? projectToRender.getAudioData().modificationOriginSamples
+          : activeStartSampleInModification;
   const double renderRegionStartSeconds = target != nullptr ? 0.0 : activeRegionStartSeconds;
   const double renderRegionEndSeconds = target != nullptr
       ? projectToRender.getAudioData().waveform.getNumSamples() /
@@ -1489,11 +1514,28 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                   audioData.sampleRate > 0
                       ? static_cast<double>(audioData.sampleRate)
                       : hostSampleRate;
-              // The project is stored in modification time and spans the
-              // whole modification, so publish it whole. Each region maps its
-              // own span out of it via getStartInAudioModificationSamples().
+              // The project is stored in modification time and spans its
+              // analysis window, so publish the window at its origin. Each
+              // region maps its own span out of it via
+              // getStartInAudioModificationSamples().
               juce::AudioBuffer<float> processedSlice;
               processedSlice.makeCopyOf(audioData.waveform);
+              // The window origin is recorded in source samples;
+              // preserveProcessedAudioOutsideRanges locates both buffers
+              // on the replacement-rate grid, so convert it (and the
+              // previously published start, also source samples) onto
+              // that grid.
+              const double publishSourceRate =
+                  renderSource != nullptr ? renderSource->getSampleRate()
+                                          : 0.0;
+              const auto toProcessedGrid =
+                  [publishSourceRate, processedRate](juce::int64 sourceSamples) {
+                    return publishSourceRate > 0.0
+                               ? static_cast<juce::int64>(std::llround(
+                                     static_cast<double>(sourceSamples) *
+                                     processedRate / publishSourceRate))
+                               : sourceSamples;
+                  };
               if (!renderChangedSampleRanges.empty()) {
                 juce::AudioBuffer<float> previousProcessed;
                 double previousRate = 0.0;
@@ -1504,19 +1546,23 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
                 if (hasPrevious)
                   preserveProcessedAudioOutsideRanges(
                       processedSlice, processedRate,
-                      /*startSampleInModification*/ 0, previousProcessed,
-                      previousRate, previousStart, renderChangedSampleRanges);
+                      toProcessedGrid(audioData.modificationOriginSamples),
+                      previousProcessed, previousRate,
+                      toProcessedGrid(previousStart),
+                      renderChangedSampleRanges);
               }
               ARA_DIAG("publish[render] mod=" + ARA_DIAG_PTR(renderModification) +
                        " key=" + renderRegionKey + " samples=" +
                        juce::String(processedSlice.getNumSamples()) +
-                       " rate=" + juce::String(processedRate, 1) + " offset=0" +
+                       " rate=" + juce::String(processedRate, 1) +
+                       " offset=" +
+                       juce::String(audioData.modificationOriginSamples) +
                        " fp=" + juce::String(araDiagFingerprint(processedSlice), 6) +
                        " changedRanges=" +
                        juce::String(static_cast<int>(renderChangedSampleRanges.size())));
               renderModification->setProcessedAudio(
                   processedSlice, processedRate,
-                  /*startSampleInModification*/ 0);
+                  audioData.modificationOriginSamples);
               renderModification->notifyContentChanged(
                   juce::ARAContentUpdateScopes::samplesAreAffected(), true);
               for (auto *region : renderModification->getPlaybackRegions())
@@ -1674,14 +1720,18 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
               ? static_cast<double>(stateProject.getAudioData().sampleRate)
               : hostSampleRate;
       if (processed.getNumSamples() > 0) {
-        // Modification-scoped project: publish it whole at offset zero.
+        // Modification-scoped project: publish its window whole, at the
+        // window's origin inside the modification (batch 5).
+        const auto windowOrigin =
+            stateProject.getAudioData().modificationOriginSamples;
         ARA_DIAG("publish[edit] mod=" + ARA_DIAG_PTR(activeModification) +
                  " key=" + activeRegionKey + " samples=" +
                  juce::String(processed.getNumSamples()) + " rate=" +
-                 juce::String(processedRate, 1) + " offset=0" +
+                 juce::String(processedRate, 1) +
+                 " offset=" + juce::String(windowOrigin) +
                  " fp=" + juce::String(araDiagFingerprint(processed), 6));
         activeModification->setProcessedAudio(processed, processedRate,
-                                              /*startSampleInModification*/ 0);
+                                              windowOrigin);
 
         // Tell the host the rendered samples changed (ARAPluginDemo pattern).
         // ARA hosts prefetch/pre-render playback-renderer output ahead of the
@@ -2470,7 +2520,10 @@ const Project *PitchNetAudioProcessor::getAraProjectForPreview(
     juce::AudioBuffer<float> processed;
     double rate = 0.0;
     juce::int64 start = 0;
-    if (modification->copyProcessedAudio(processed, rate, start) && start == 0) {
+    // Batch 5: the saved render is the project's window, published at
+    // the window origin - accept it only when it starts exactly there.
+    if (modification->copyProcessedAudio(processed, rate, start) &&
+        start == audio.modificationOriginSamples) {
       const double projectRate = audio.sampleRate > 0 ? audio.sampleRate : rate;
       if (juce::approximatelyEqual(rate, projectRate))
         audio.waveform.makeCopyOf(processed);
@@ -2662,14 +2715,36 @@ PitchNetAudioProcessor::activeRegionSpanInModificationTime() const {
   return {start, start + length};
 }
 
+std::pair<double, double>
+PitchNetAudioProcessor::activeRegionSpanInProjectTime() const {
+  const auto span = activeRegionSpanInModificationTime();
+  // The project that would be (or is being) shown for the active
+  // region supplies the window origin: the canvas project when it
+  // shows this region, otherwise the cached one. No project yet (or a
+  // whole-modification one) means the two grids coincide.
+  const Project *project = nullptr;
+  if (canvasShowsActiveAraRegion && mainComponent != nullptr)
+    project = mainComponent->getProject();
+  if (project == nullptr) {
+    const auto it = araRegions.find(activeRegionKey);
+    if (it != araRegions.end())
+      project = it->second.project.get();
+  }
+  const double originSeconds =
+      project != nullptr ? modificationOriginSeconds(project->getAudioData())
+                         : 0.0;
+  return {std::max(0.0, span.first - originSeconds),
+          std::max(0.0, span.second - originSeconds)};
+}
+
 void PitchNetAudioProcessor::pushTimelineDisplayOffset() const {
   if (mainComponent == nullptr)
     return;
 
-  // regionStartInPlaybackTime - regionStartInModificationTime. Deliberately
+  // regionStartInPlaybackTime - regionStartInProjectTime. Deliberately
   // unclamped: a region windowing the back of a take, placed near the start of
   // the timeline, legitimately yields a negative offset.
-  const auto span = activeRegionSpanInModificationTime();
+  const auto span = activeRegionSpanInProjectTime();
   const double offset =
       activeModification != nullptr ? activeRegionStartSeconds - span.first
                                     : 0.0;
@@ -2856,6 +2931,9 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
     regionCanvasController = makeRenderController();
 
   const bool backgroundAnalysis = regionKey != activeRegionKey;
+  // The buffer is the analysis window, read from the source at
+  // sampleRate, so its length is the window length in source samples.
+  const juce::int64 windowLengthInSourceSamples = buffer.getNumSamples();
   const auto analysisGeneration =
       regionCanvasAnalysisGeneration.fetch_add(1) + 1;
   pendingRegionCanvasAnalysisKey = regionKey;
@@ -2891,7 +2969,8 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
             });
       },
       [this, regionKey, modification, startSampleInModification,
-       analysisGeneration, sampleRate, backgroundAnalysis,
+       windowLengthInSourceSamples, analysisGeneration, sampleRate,
+       backgroundAnalysis,
        timelineOffsetSeconds](const juce::AudioBuffer<float> &) {
         if (!regionCanvasController ||
             regionCanvasAnalysisGeneration.load() != analysisGeneration)
@@ -2909,17 +2988,24 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
           return;
         }
 
-        // Analysis is modification-scoped now: the project covers the
-        // whole modification and the caller passes zero for the offset.
+        // Analysis is modification-scoped: the project covers its
+        // analysis window of the modification (batch 5) and the caller
+        // passes the window's start as the offset.
         juce::ignoreUnused(timelineOffsetSeconds);
-        // Length, not absolute end: the span starts at the region's offset
-        // into the modification, so pass what remains of the take from there.
-        stampSpanInModificationTime(
-            *project, startSampleInModification,
-            std::max(0.0, project->getAudioData().getDuration() -
-                              static_cast<double>(startSampleInModification) /
-                                  std::max(1.0, sampleRate)),
-            sampleRate);
+        // Record where the window sits BEFORE anything stamps spans
+        // onto the project: the stamps convert modification positions
+        // through this origin.
+        project->getAudioData().modificationOriginSamples =
+            startSampleInModification;
+        project->getAudioData().modificationWindowSamples =
+            windowLengthInSourceSamples;
+        project->getAudioData().modificationSourceSampleRate = sampleRate;
+        // The initial span covers the whole window (the stamp converts
+        // the window start to project time zero); showing the project
+        // re-stamps it with the active region's own span.
+        stampSpanInModificationTime(*project, startSampleInModification,
+                                    project->getAudioData().getDuration(),
+                                    sampleRate);
 
         attachMacroParameters(*project);
 
@@ -2940,9 +3026,9 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
           activeRegionKey = regionKey;
           activeModification = modification;
           // Placement is the live region's, in host time, exactly as
-          // setActiveAraRegion() records it. The analysis offset is always
-          // zero and the project spans the whole modification, so neither can
-          // stand in for the region's position or length.
+          // setActiveAraRegion() records it. The analysis offset is the
+          // window start and the project spans only its window, so neither
+          // can stand in for the region's position or length.
           juce::ARAPlaybackRegion *placement = nullptr;
           if (araDocumentController != nullptr) {
             auto *current = araDocumentController->getCurrentPlaybackRegion();
@@ -2972,8 +3058,8 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
 
         // Paint it onto the canvas if it is still the active region.
         if (regionKey == activeRegionKey && mainComponent) {
-          // The canvas is in modification time; the placement is host time.
-          const auto latestSpan = activeRegionSpanInModificationTime();
+          // The canvas is in project time; the placement is host time.
+          const auto latestSpan = activeRegionSpanInProjectTime();
           auto displaced = mainComponent->exchangeProject(
               std::move(araRegions[regionKey].project));
           juce::ignoreUnused(displaced);
@@ -3123,6 +3209,27 @@ bool PitchNetAudioProcessor::hasAraRegionProject(
   return it != araRegions.end() && it->second.project != nullptr;
 }
 
+bool PitchNetAudioProcessor::getAraRegionProjectWindow(
+    const juce::String &regionKey, juce::int64 &originOut,
+    juce::int64 &lengthOut) const {
+  originOut = 0;
+  lengthOut = 0;
+  const Project *project = nullptr;
+  if (regionKey == activeRegionKey && canvasShowsActiveAraRegion &&
+      mainComponent != nullptr)
+    project = mainComponent->getProject();
+  if (project == nullptr) {
+    const auto it = araRegions.find(regionKey);
+    if (it != araRegions.end())
+      project = it->second.project.get();
+  }
+  if (project == nullptr)
+    return false;
+  originOut = project->getAudioData().modificationOriginSamples;
+  lengthOut = project->getAudioData().modificationWindowSamples;
+  return true;
+}
+
 bool PitchNetAudioProcessor::araRegionProjectNeedsSourceHydration(
     const juce::String &regionKey) const {
   const Project *project = nullptr;
@@ -3193,10 +3300,13 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
 
   // A timeline-era length check lived here: it compared the end of
   // playbackRegionRanges against the source buffer length, on the assumption
-  // that both ran from timeline zero. Ranges are now in modification time and
-  // the buffer is always the whole modification, so that comparison only
-  // passed when a region happened to end at the end of the take - and sent
-  // every other region into a needless full re-analysis, discarding its edits.
+  // that both ran from timeline zero. Ranges are now in modification time,
+  // so that comparison only passed when a region happened to end at the end
+  // of the take - and sent every other region into a needless full
+  // re-analysis, discarding its edits. Batch 5: the buffer handed in here
+  // is the project's analysis WINDOW slice of the modification (the intake
+  // reads exactly the window recorded on the project), so the pristine
+  // waveform, mel and F0 below all live on the window grid as stored.
 
   audioData.sampleRate = juce::roundToInt(projectSampleRate);
   if (audioData.originalWaveform.getNumSamples() <= 0)
@@ -3216,8 +3326,9 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
 
   // Prefer the separately persisted render as the authoritative waveform: it
   // already contains every saved edit, including global processing. Start from
-  // the pristine source - the whole modification, in modification time, with no
-  // timeline padding - and let the processed audio replace it where present.
+  // the pristine source - the project's window of the modification, in
+  // modification time, with no timeline padding - and let the processed audio
+  // replace it where present.
   if (audioData.waveform.getNumSamples() <= 0) {
     audioData.waveform.makeCopyOf(*hydratedSource);
 
@@ -3228,14 +3339,19 @@ bool PitchNetAudioProcessor::hydrateAraRegionProject(
       const bool hasProcessedAudio = activeModification->copyProcessedAudio(
           processedAudio, processedRate, processedStartInModification);
 
-      // Processed audio is modification-scoped and stored at offset zero, so
-      // it already IS the edited waveform for the whole take. The previous
-      // timeline splice rebuilt the buffer starting at the region's offset
-      // into the modification, which then got published at offset zero - so
-      // every region read its own offset into an already-offset buffer and
-      // played the wrong part of the take.
-      if (hasProcessedAudio && processedAudio.getNumSamples() > 0) {
-        jassert(processedStartInModification == 0);
+      // Processed audio is modification-scoped and stored at the project's
+      // window origin, so when it starts exactly there it already IS the
+      // edited waveform for the whole window. A render stored at any other
+      // start belongs to a different window (e.g. published before the
+      // project was re-windowed) and must not be spliced in: fall back to
+      // the pristine slice instead. The previous timeline splice rebuilt
+      // the buffer starting at the region's offset into the modification,
+      // which then got published at offset zero - so every region read its
+      // own offset into an already-offset buffer and played the wrong part
+      // of the take.
+      if (hasProcessedAudio && processedAudio.getNumSamples() > 0 &&
+          processedStartInModification ==
+              audioData.modificationOriginSamples) {
         if (!juce::approximatelyEqual(processedRate, projectSampleRate)) {
           auto converted = AudioResampler::resample(
               processedAudio, processedRate, projectSampleRate);
@@ -3320,7 +3436,7 @@ bool PitchNetAudioProcessor::showAraRegionProjectIfActive(
   canvasShowsActiveAraRegion = true;
   mainComponent->hideAnalysisProgress();
   {
-    const auto span = activeRegionSpanInModificationTime();
+    const auto span = activeRegionSpanInProjectTime();
     mainComponent->focusTimelineRange(span.first, span.second);
   }
   return true;
@@ -3417,7 +3533,7 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
     canvasShowsActiveAraRegion = true;
     mainComponent->hideAnalysisProgress();
     {
-      const auto span = activeRegionSpanInModificationTime();
+      const auto span = activeRegionSpanInProjectTime();
       mainComponent->focusTimelineRange(span.first, span.second);
     }
   };

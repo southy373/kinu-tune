@@ -212,6 +212,49 @@ void hostBackedArchiveStaysSourceless() {
   CHECK(restored.getNotes().size() == 1);
 }
 
+// Batch 5: the analysis window's position inside the modification must
+// survive both archive forms, and an archive written before windowed
+// analysis (no window fields at all) must read back as origin zero - the
+// old whole-modification coordinates.
+void windowOriginRoundTrips() {
+  Project source = makeProject(0.0);
+  auto &audio = source.getAudioData();
+  audio.modificationOriginSamples = 4560000; // 95 s at 48 kHz
+  audio.modificationWindowSamples = 960000;  // 20 s at 48 kHz
+  audio.modificationSourceSampleRate = 48000.0;
+
+  Project restored;
+  CHECK(ProjectSerializer::fromJson(restored, ProjectSerializer::toJson(source)));
+  const auto &jsonAudio = restored.getAudioData();
+  CHECK(jsonAudio.modificationOriginSamples == 4560000);
+  CHECK(jsonAudio.modificationWindowSamples == 960000);
+  CHECK(jsonAudio.modificationSourceSampleRate == 48000.0);
+
+  juce::MemoryBlock archive;
+  CHECK(ProjectSerializer::toBinaryArchive(
+      source, archive, ProjectSerializer::BinaryArchiveMode::hostBackedARA));
+  Project restoredBinary;
+  CHECK(ProjectSerializer::fromBinaryArchive(restoredBinary, archive.getData(),
+                                             archive.getSize()));
+  const auto &binaryAudio = restoredBinary.getAudioData();
+  CHECK(binaryAudio.modificationOriginSamples == 4560000);
+  CHECK(binaryAudio.modificationWindowSamples == 960000);
+  CHECK(binaryAudio.modificationSourceSampleRate == 48000.0);
+
+  auto legacy = ProjectSerializer::toJson(source);
+  legacy.getDynamicObject()->removeProperty("modificationOriginSamples");
+  legacy.getDynamicObject()->removeProperty("modificationWindowSamples");
+  legacy.getDynamicObject()->removeProperty("modificationSourceSampleRate");
+  Project restoredLegacy;
+  CHECK(ProjectSerializer::fromJson(restoredLegacy, legacy));
+  const auto &legacyAudio = restoredLegacy.getAudioData();
+  CHECK(legacyAudio.modificationOriginSamples == 0);
+  CHECK(legacyAudio.modificationWindowSamples == 0);
+  CHECK(legacyAudio.modificationSourceSampleRate == 0.0);
+
+  std::cout << "window origin round-trips and defaults to zero: ok\n";
+}
+
 } // namespace
 
 int main() {
@@ -277,6 +320,7 @@ int main() {
   roundTripRebuildsMel(0.25);
   streamWriterMatchesMemoryBlockWriter();
   hostBackedArchiveStaysSourceless();
+  windowOriginRoundTrips();
   std::cout << "PluginStateArchiveTests passed\n";
   return 0;
 }

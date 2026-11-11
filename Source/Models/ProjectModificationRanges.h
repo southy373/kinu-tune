@@ -22,8 +22,51 @@
 
 using SampleRange = juce::Range<int>;
 
+// Batch 5: the ARA analysis window. Analysis no longer reads the whole
+// modification: it reads the union of every playback region referencing
+// the modification, widened by this margin on both sides and clamped to
+// the source. The margin is an internal constant, not a user setting -
+// it exists so the pitch/segmentation context at a clip edge (and the
+// ~0.7s of render context an edit at the edge needs) sits comfortably
+// inside the analysed range, and so small host-side trims keep working
+// without a re-analysis. Five seconds is roughly seven times the render
+// context and far beyond the few hundred milliseconds where detection
+// near a hard cut is unreliable.
+inline constexpr double kAnalysisWindowMarginSeconds = 5.0;
+
+// The window to read and analyse, in modification samples, for a region
+// union of [unionStart, unionEnd) within a source of sourceSampleCount
+// samples at sourceSampleRate. An empty/invalid union yields an empty
+// range at the source start; the caller treats that as "no window" and
+// falls back to the whole source.
+inline juce::Range<juce::int64>
+computeAnalysisWindowSamples(juce::int64 unionStart, juce::int64 unionEnd,
+                             juce::int64 sourceSampleCount,
+                             double sourceSampleRate) {
+  if (sourceSampleCount <= 0 || sourceSampleRate <= 0.0 ||
+      unionEnd <= unionStart)
+    return {};
+
+  const auto margin = static_cast<juce::int64>(
+      std::llround(kAnalysisWindowMarginSeconds * sourceSampleRate));
+  const juce::int64 start = std::max<juce::int64>(0, unionStart - margin);
+  const juce::int64 end =
+      std::min(sourceSampleCount, unionEnd + margin);
+  if (end <= start)
+    return {};
+  return {start, end};
+}
+
 // Frames dirtied by editing, converted to modification samples and merged into
 // disjoint ranges.
+//
+// Batch 5 note: projects are windowed (see computeAnalysisWindowSamples
+// above), so these come out in WINDOW samples - the project's own sample
+// grid, whose zero is the window start. That is deliberate: the sole
+// production consumer feeds them to preserveProcessedAudioOutsideRanges
+// as indices into the replacement buffer (also window samples), and the
+// window origin enters that function's mapping through its start-offset
+// arguments, not through these ranges.
 //
 // This previously subtracted the playback region's timeline start, producing
 // region-relative samples, while its consumer below indexes a buffer that

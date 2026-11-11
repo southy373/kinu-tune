@@ -176,6 +176,19 @@ public:
   // modification-scoped, so this is the only coordinate system they use;
   // timeline placement is applied at render and draw time, never stored.
   std::pair<double, double> activeRegionSpanInModificationTime() const;
+  // The same span expressed in the shown project's own time (batch 5:
+  // the span above, shifted by the analysis window's origin). The
+  // canvas and its focus calls live in project time; the modification
+  // form above is for stamping and placement bookkeeping.
+  std::pair<double, double> activeRegionSpanInProjectTime() const;
+  // The analysis window recorded on a cached project (batch 5): the
+  // origin/length, in modification samples, of the source range the
+  // project was analysed from. False when no project is cached for the
+  // key; a cached project with length <= 0 predates windowed analysis
+  // and spans from its origin to the end of the source.
+  bool getAraRegionProjectWindow(const juce::String &regionKey,
+                                 juce::int64 &originOut,
+                                 juce::int64 &lengthOut) const;
   void stampActiveRegionSpan(Project &project) const;
   // Tell the editor where the active region's content sits on the host
   // timeline, so the ruler and playhead line up with the drawn waveform.

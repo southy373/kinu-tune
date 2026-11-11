@@ -40,6 +40,22 @@ struct AudioData
     // Empty for standalone/non-ARA projects.
     std::vector<std::pair<double, double>> playbackRegionRanges;
 
+    // Batch 5: ARA analysis window. An ARA project no longer analyses
+    // the whole audio modification: it covers a window of it (the union
+    // of every playback region referencing the modification, plus a
+    // margin), and project time zero is the WINDOW start, not the
+    // modification start. These fields locate the window inside the
+    // modification, in modification samples counted at
+    // modificationSourceSampleRate (the ARA source's rate - the same
+    // unit ARA reports region positions in). modificationWindowSamples
+    // is the window length in those samples; zero means "the whole
+    // modification from the origin", which is also what pre-batch-5
+    // archives (and every non-ARA project) carry: origin zero, window
+    // unset, exactly the old whole-modification behaviour.
+    juce::int64 modificationOriginSamples = 0;
+    juce::int64 modificationWindowSamples = 0;
+    double modificationSourceSampleRate = 0.0;
+
     // Extracted features
     std::vector<std::vector<float>> melSpectrogram;      // [T, NUM_MELS]
     // Pitch analysis stages, all aligned to the vocoder/mel frame grid.

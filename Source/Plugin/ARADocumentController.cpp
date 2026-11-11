@@ -3,6 +3,7 @@
 
 #if JucePlugin_Enable_ARA
 
+#include "../Models/ProjectModificationRanges.h"
 #include "../Models/ProjectSerializer.h"
 #include "../Utils/Constants.h"
 #include "PluginProcessor.h"
@@ -1798,23 +1799,77 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
     }
   }
 
-  // Analyse the whole audio modification rather than one region's slice. The
-  // edits belong to the modification and every region referencing it is a
-  // window onto the same material, so the project is stored in MODIFICATION
-  // time with no leading timeline padding. Timeline placement is applied when
-  // rendering and when drawing, not baked into the analysis.
+  // Batch 5: analyse a WINDOW of the audio modification rather than the
+  // whole file. The edits belong to the modification and every region
+  // referencing it is a window onto the same material, so the analysis
+  // window is the union of ALL those regions (not just the selected
+  // one), widened by a margin (computeAnalysisWindowSamples). Project
+  // time zero is the window start; the project records where its window
+  // sits inside the modification (AudioData::modificationOriginSamples)
+  // and every modification-space conversion goes through that origin.
+  // Timeline placement is applied when rendering and when drawing, not
+  // baked into the analysis.
+  //
+  // A project that already exists for this modification (restored from
+  // its archive, awaiting hydration below) keeps the window it was
+  // analysed with: the buffer read here must be exactly its window, or
+  // its notes and F0 would be re-based onto the wrong audio. Only a
+  // fresh analysis computes a window from the live regions. A legacy
+  // project (pre-batch-5 archive, no window recorded) falls through
+  // with the whole source, matching its stored coordinates.
   const double sourceSampleRate = source->getSampleRate();
   const auto sourceSampleCount = source->getSampleCount();
   if (sourceSampleCount <= 0 ||
       sourceSampleCount > std::numeric_limits<int>::max())
     return;
 
-  const int numSamples = static_cast<int>(sourceSampleCount);
+  juce::int64 windowStart = 0;
+  juce::int64 windowLength = sourceSampleCount;
+  juce::int64 storedOrigin = 0;
+  juce::int64 storedLength = 0;
+  if (processor->getAraRegionProjectWindow(liveKey, storedOrigin,
+                                           storedLength) &&
+      storedLength > 0) {
+    windowStart =
+        juce::jlimit<juce::int64>(0, sourceSampleCount, storedOrigin);
+    windowLength = juce::jlimit<juce::int64>(0, sourceSampleCount - windowStart,
+                                             storedLength);
+  } else if (!processor->hasAraRegionProject(liveKey)) {
+    juce::int64 unionStart = sourceSampleCount;
+    juce::int64 unionEnd = 0;
+    for (auto *sibling :
+         modification->getPlaybackRegions<juce::ARAPlaybackRegion>()) {
+      if (sibling == nullptr)
+        continue;
+      const juce::int64 regionStart =
+          sibling->getStartInAudioModificationSamples();
+      const double regionSeconds =
+          std::max(0.0, sibling->getEndInPlaybackTime() -
+                            sibling->getStartInPlaybackTime());
+      const juce::int64 regionEnd =
+          regionStart + static_cast<juce::int64>(
+                            std::llround(regionSeconds * sourceSampleRate));
+      unionStart = std::min(unionStart, regionStart);
+      unionEnd = std::max(unionEnd, regionEnd);
+    }
+    const auto window = computeAnalysisWindowSamples(
+        unionStart, unionEnd, sourceSampleCount, sourceSampleRate);
+    if (!window.isEmpty()) {
+      windowStart = window.getStart();
+      windowLength = window.getLength();
+    }
+  }
+
+  if (windowLength <= 0 ||
+      windowLength > std::numeric_limits<int>::max())
+    return;
+
+  const int numSamples = static_cast<int>(windowLength);
   juce::AudioBuffer<float> buffer(1, numSamples);
   buffer.clear();
 
   juce::ARAAudioSourceReader reader(source);
-  if (!reader.read(&buffer, 0, numSamples, 0, true, false))
+  if (!reader.read(&buffer, 0, numSamples, windowStart, true, false))
     return;
 
   // ARA region archives retain edit data, but not project waveforms or mel.
@@ -1834,9 +1889,11 @@ void PitchNetDocumentController::requestRegionCanvasAnalysis(
            " needsHydration=" +
            juce::String(processor->araRegionProjectNeedsSourceHydration(liveKey)
                             ? 1 : 0) +
-           " sourceSamples=" + juce::String(numSamples));
+           " sourceSamples=" + juce::String(numSamples) +
+           " windowStart=" + juce::String(windowStart));
   processor->analyzeAraRegionForCanvas(liveKey, pitchModification,
-                                       /*startSampleInModification*/ 0,
+                                       /*startSampleInModification*/
+                                       windowStart,
                                        /*timelineOffsetSeconds*/ 0.0, buffer,
                                        sourceSampleRate);
 }

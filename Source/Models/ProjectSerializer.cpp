@@ -183,6 +183,19 @@ juce::var ProjectSerializer::toJson(const Project& project,
     }
     obj->setProperty("playbackRegionRanges", regionRanges);
 
+    // Batch 5: where this project's analysis window sits inside its
+    // ARA audio modification (see AudioData). Absent in pre-batch-5
+    // archives, where fromJson's defaults (origin zero, window unset)
+    // reproduce the old whole-modification coordinates exactly.
+    obj->setProperty("modificationOriginSamples",
+                     static_cast<juce::int64>(
+                         project.getAudioData().modificationOriginSamples));
+    obj->setProperty("modificationWindowSamples",
+                     static_cast<juce::int64>(
+                         project.getAudioData().modificationWindowSamples));
+    obj->setProperty("modificationSourceSampleRate",
+                     project.getAudioData().modificationSourceSampleRate);
+
     // Global parameters
     obj->setProperty("globalPitchOffset", project.getGlobalPitchOffset());
     obj->setProperty("formantShift", project.getFormantShift());
@@ -310,6 +323,12 @@ bool ProjectSerializer::fromJson(Project& project, const juce::var& json) {
                     static_cast<double>((*range)[1]));
         }
     }
+    audioData.modificationOriginSamples = static_cast<juce::int64>(
+        json.getProperty("modificationOriginSamples", 0));
+    audioData.modificationWindowSamples = static_cast<juce::int64>(
+        json.getProperty("modificationWindowSamples", 0));
+    audioData.modificationSourceSampleRate = static_cast<double>(
+        json.getProperty("modificationSourceSampleRate", 0.0));
 
     // Load the stored region key before resolving inheritance.
     project.setUseProjectKey(false);
