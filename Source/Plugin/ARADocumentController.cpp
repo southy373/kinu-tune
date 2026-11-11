@@ -15,6 +15,7 @@
 #include <limits>
 #include <utility>
 
+#include "AraArchiveIdentity.h"
 #include "AraDiagnostics.h"
 
 juce::String
@@ -69,8 +70,57 @@ constexpr juce::int64 kPitchNetAraModificationArchiveMagic =
 // read for stream alignment only and then discarded - their note frames and
 // waveforms are timeline-anchored, so reusing them here would place edits and
 // rendered audio at the wrong offset. Affected modifications simply re-analyse.
-constexpr int kPitchNetAraModificationArchiveVersion = 4;
+// v5 (batch 5.1): each modification entry also records the identity of its
+// audio source (AraArchiveIdentity.h), written right after the persistent ID
+// and checked against the matched live modification's source at restore.
+constexpr int kPitchNetAraModificationArchiveVersion = 5;
 constexpr int kPitchNetAraFirstModificationTimeArchiveVersion = 4;
+constexpr int kPitchNetAraFirstSourceIdentityArchiveVersion = 5;
+
+// Batch 5.1 (item 11): the ARA-aware half of the source identity.
+// Probe windows sit at fixed positions of the source (start, middle,
+// end), so the same source produces the same fingerprint at store
+// and restore time. A source that cannot be read here (the host has
+// not enabled sample access at this point) yields no fingerprint,
+// and that field then never refuses a restore on its own.
+AraSourceIdentity araSourceIdentityOf(juce::ARAAudioSource *source) {
+  AraSourceIdentity identity;
+  if (source == nullptr)
+    return identity;
+  identity.sourceId = juce::String(source->getPersistentID());
+  identity.sampleCount = source->getSampleCount();
+  if (identity.sampleCount <= 0)
+    return identity;
+
+  constexpr int kProbeSamples = 512;
+  const juce::int64 starts[3] = {0, identity.sampleCount / 2 - kProbeSamples / 2,
+                                 identity.sampleCount - kProbeSamples};
+  juce::ARAAudioSourceReader reader(source);
+  juce::AudioBuffer<float> probe(1, kProbeSamples);
+  double sum = 0.0;
+  juce::int64 tap = 0;
+  bool anyRead = false;
+  for (const auto startRaw : starts) {
+    const auto start = juce::jlimit<juce::int64>(
+        0, identity.sampleCount - 1, startRaw);
+    const int count = static_cast<int>(
+        std::min<juce::int64>(kProbeSamples, identity.sampleCount - start));
+    if (count <= 0)
+      continue;
+    probe.clear();
+    if (!reader.read(&probe, 0, count, start, true, false))
+      continue;
+    anyRead = true;
+    const float *p = probe.getReadPointer(0);
+    for (int i = 0; i < count; ++i, ++tap)
+      sum += static_cast<double>(p[i]) * static_cast<double>(tap + 1);
+  }
+  if (anyRead) {
+    identity.fingerprint = sum;
+    identity.hasFingerprint = true;
+  }
+  return identity;
+}
 
 juce::AudioBuffer<float> resampleAuditionBuffer(
     const juce::AudioBuffer<float> &source, double sourceRate,
@@ -2504,6 +2554,15 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
     for (juce::int64 i = 0; i < numAudioModifications; ++i) {
       const auto persistentID = input.readString();
 
+      // Batch 5.1 (item 11): v5 entries carry the source identity
+      // right after the ID. Read it unconditionally (matched or not)
+      // so the stream stays aligned.
+      AraSourceIdentity storedIdentity;
+      const bool hasStoredIdentity =
+          version >= kPitchNetAraFirstSourceIdentityArchiveVersion;
+      if (hasStoredIdentity)
+        storedIdentity = readAraSourceIdentity(input);
+
       // Match the modification first so per-region audio (which has no size
       // prefix) can be read or skipped inline, keeping the stream aligned.
       auto *audioModification =
@@ -2519,18 +2578,44 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
                " version=" + juce::String(version) +
                " payloadUsable=" + juce::String(payloadIsUsable ? 1 : 0));
 
-      // Batch 5.1 (item 10): refuse the payload when its ID belongs
-      // to a modification destroyed earlier in this session (the
-      // Make-Permanent signature) - the live modification starts
-      // NEW. The payload bytes are still consumed below (the
-      // unmatched path), so the stream stays aligned; only the
-      // restore calls are skipped.
-      if (payloadIsUsable && audioModification != nullptr &&
-          destroyedModificationPersistentIds.count(persistentID) > 0) {
-        ARA_DIAG("restoreDenied archivedId=" + persistentID +
-                 " reason=destroyedThisSession");
-        audioModification = nullptr;
-        pitchModification = nullptr;
+      // Batch 5.1 (items 10/11): two refusals, both leaving the live
+      // modification to start NEW - the payload bytes are still
+      // consumed below (the unmatched path), so the stream stays
+      // aligned; only the restore calls are skipped.
+      //  (10) The ID belongs to a modification destroyed earlier in
+      //       this session (the Make-Permanent signature).
+      //  (11) The stored source identity definitely disagrees with
+      //       the matched live modification's source (a different
+      //       take whose token collided).
+      // Pre-v5 archives carry no identity: they are accepted as
+      // before, and the acceptance is logged so a trial session can
+      // tell legacy restores from checked ones.
+      if (payloadIsUsable && audioModification != nullptr) {
+        juce::String refuseReason;
+        if (destroyedModificationPersistentIds.count(persistentID) > 0) {
+          refuseReason = "destroyedThisSession";
+        } else if (hasStoredIdentity) {
+          const auto liveIdentity =
+              araSourceIdentityOf(audioModification->getAudioSource());
+          juce::String field;
+          if (araSourceIdentityMismatch(storedIdentity, liveIdentity,
+                                        &field))
+            refuseReason = "sourceMismatch:" + field +
+                           " stored={" +
+                           describeAraSourceIdentity(storedIdentity) +
+                           "} live={" +
+                           describeAraSourceIdentity(liveIdentity) + "}";
+        } else {
+          ARA_DIAG("restoreIdentity archivedId=" + persistentID +
+                   " legacy=v" + juce::String(version) +
+                   " acceptedWithoutIdentity=1");
+        }
+        if (refuseReason.isNotEmpty()) {
+          ARA_DIAG("restoreDenied archivedId=" + persistentID +
+                   " reason=" + refuseReason);
+          audioModification = nullptr;
+          pitchModification = nullptr;
+        }
       }
 
       // Per region: a project JSON and, optionally, rendered processed audio.
@@ -2672,6 +2757,12 @@ bool PitchNetDocumentController::doStoreObjectsToStream(
 
         if (!output.writeString(archivedModificationID))
           return false;
+
+        // Batch 5.1 (item 11, archive v5): the identity of this
+        // modification's audio source, checked at restore against
+        // the matched live modification's source.
+        writeAraSourceIdentity(
+            output, araSourceIdentityOf(audioModification->getAudioSource()));
 
         // One entry per audio modification. Identity is the modification, not
         // the playback region: every region referencing it is a window onto the

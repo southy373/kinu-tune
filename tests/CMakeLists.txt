@@ -30,6 +30,7 @@ set(PITCHNET_TEST_SOURCES
     ProjectModificationRangeTests.cpp
     PublishGateTests.cpp
     OriginalPitchResidualTests.cpp
+    AraArchiveIdentityTests.cpp
     SynthesisEngineShareTests.cpp
     TimelineCoordinateTests.cpp
     VisualWaveformEnvelopeTests.cpp)
