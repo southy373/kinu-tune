@@ -1631,6 +1631,40 @@ void PitchNetAudioProcessor::requestPluginProjectRender(
       pendingRerun, true);
 }
 
+void PitchNetAudioProcessor::syncApvtsGlobalsFromProject(
+    const Project &project) {
+  // Batch 5.1 (formant-fader / pitch-offset investigations): the APVTS
+  // parameters "formantShift" and "pitchOffset" used to be second
+  // masters for the editor faders. The faders write only to the
+  // project, while checkParameterChanges treats the APVTS value as
+  // canonical and overwrites the project from it on the next audio
+  // block - which is why the formant fader sprang back to centre, and
+  // how a stray host-side pitch offset (about +3 semitones) kept
+  // re-infecting every clip at ~120%. From 5.1 the project is the
+  // master and the APVTS parameters are mirrors: wherever the two
+  // have drifted apart, the project value is pushed out. The push is
+  // guarded by the same 0.001 threshold checkParameterChanges uses,
+  // so it only fires on real drift, never per edit. Message thread
+  // only (setValueNotifyingHost), matching the editor-open restore
+  // push that already used this pattern.
+  const auto pushIfDrifted = [this](const char *paramId, float value,
+                                    const char *tag) {
+    auto *param = apvts.getParameter(paramId);
+    if (param == nullptr)
+      return;
+    const float current = param->convertFrom0to1(param->getValue());
+    if (std::abs(current - value) <= 0.001f)
+      return;
+    ARA_DIAG(juce::String("apvtsPush ") + tag + " from=" +
+             juce::String(current, 3) + " to=" + juce::String(value, 3));
+    param->setValueNotifyingHost(param->convertTo0to1(value));
+  };
+  pushIfDrifted(PARAM_PITCH_OFFSET, project.getGlobalPitchOffset(),
+                "pitchOffset");
+  pushIfDrifted(PARAM_FORMANT_SHIFT, project.getFormantShift(),
+                "formantShift");
+}
+
 void PitchNetAudioProcessor::updateProjectStateFromEditor(
     const Project &project) {
   // Batch 3.2 write-back guard: an editor project carrying no analysis
@@ -1691,6 +1725,10 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
       !stateProject.getAudioData().f0.empty();
   cachedPitchOffset = stateProject.getGlobalPitchOffset();
   cachedFormantShift = stateProject.getFormantShift();
+  // Batch 5.1: keep the APVTS mirrors in step with the project, so the
+  // audio thread's change detection sees no drift to "correct" back
+  // over the value the user just set on a fader.
+  syncApvtsGlobalsFromProject(stateProject);
   publishPersistentProjectSnapshot(stateProject);
 
 #if JucePlugin_Enable_ARA
@@ -2023,6 +2061,11 @@ bool PitchNetAudioProcessor::restorePersistentProjectState(
         !restoredProject->getAudioData().f0.empty();
     cachedPitchOffset = restoredProject->getGlobalPitchOffset();
     cachedFormantShift = restoredProject->getFormantShift();
+    // Batch 5.1, same rule as the ARA restore path: the restored
+    // project is the master for the globals - mirror it into the
+    // APVTS parameters instead of letting a saved host-side value
+    // overwrite it on the next audio block.
+    syncApvtsGlobalsFromProject(*restoredProject);
 
     if (!araAnalysisController)
       araAnalysisController = makeRenderController();
@@ -2186,28 +2229,57 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
       else
         attachMacroParameters(*project);
 
-      const float po = pitchOffsetParamValue->load();
-      const float fs = formantShiftParamValue->load();
-      if (std::abs(po) > 0.001f)
-        project->setGlobalPitchOffset(po);
-      if (std::abs(fs) > 0.001f)
-        project->setFormantShift(fs);
-
-      if (restoredPersistentProject) {
-        apvts.getParameter(PARAM_PITCH_OFFSET)
-            ->setValueNotifyingHost(apvts.getParameter(PARAM_PITCH_OFFSET)
-                                       ->convertTo0to1(
-                                           project->getGlobalPitchOffset()));
-        apvts.getParameter(PARAM_FORMANT_SHIFT)
-            ->setValueNotifyingHost(apvts.getParameter(PARAM_FORMANT_SHIFT)
-                                       ->convertTo0to1(
-                                           project->getFormantShift()));
-        araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
-        invalidateAraAnalysisProjectJson();
-        araAnalysisReady =
-            project->getAudioData().waveform.getNumSamples() > 0 &&
-            !project->getAudioData().f0.empty();
-        publishPersistentProjectSnapshot(*project);
+      // Batch 5.1 (item 4, including the entry-route supplement): at
+      // a bind moment the PROJECT is the master whenever it carries
+      // values of its own - a restored project, or an analysed region
+      // project placed on the canvas by the region show path. Its
+      // globals are pushed to the APVTS mirrors immediately (and the
+      // change-detection caches synced), so no window remains in
+      // which a stale host-side value - the ~+3-semitone pitch offset
+      // that used to follow the user from clip to clip - can be
+      // written back into it by checkParameterChanges, whichever
+      // route the stale value arrived by (saved plug-in state, or a
+      // re-attached archive payload). Up to 5.0 the APVTS values were
+      // injected into the project FIRST here, so the push below
+      // mirrored the injected values back out and the project's own
+      // globals never took effect whenever the host-side parameters
+      // were non-neutral.
+      // A truly fresh project (no analysis yet) is the only case
+      // that still adopts the APVTS values as its starting point.
+      // Outside bind moments the direction inverts as before: a host
+      // automation / generic-UI change to the APVTS parameters is
+      // host intent and flows into the project through
+      // checkParameterChanges.
+      if (restoredPersistentProject || projectHasAnalysisData(*project)) {
+        syncApvtsGlobalsFromProject(*project);
+        cachedPitchOffset = project->getGlobalPitchOffset();
+        cachedFormantShift = project->getFormantShift();
+        ARA_DIAG("editorBind globals src=" +
+                 juce::String(restoredPersistentProject ? "restored"
+                                                        : "project") +
+                 " po=" + juce::String(project->getGlobalPitchOffset(), 3) +
+                 " fs=" + juce::String(project->getFormantShift(), 3));
+        if (restoredPersistentProject) {
+          araAnalysisProjectSnapshot = std::make_unique<Project>(*project);
+          invalidateAraAnalysisProjectJson();
+          araAnalysisReady =
+              project->getAudioData().waveform.getNumSamples() > 0 &&
+              !project->getAudioData().f0.empty();
+          publishPersistentProjectSnapshot(*project);
+        }
+      } else {
+        // A fresh project has no globals of its own yet: adopt the
+        // host-side parameters (host automation / generic parameter
+        // UI) as its starting values, as before.
+        const float po = pitchOffsetParamValue->load();
+        const float fs = formantShiftParamValue->load();
+        if (std::abs(po) > 0.001f)
+          project->setGlobalPitchOffset(po);
+        if (std::abs(fs) > 0.001f)
+          project->setFormantShift(fs);
+        ARA_DIAG("editorBind globals src=apvts po=" +
+                 juce::String(project->getGlobalPitchOffset(), 3) +
+                 " fs=" + juce::String(project->getFormantShift(), 3));
       }
     }
 
@@ -3440,6 +3512,15 @@ bool PitchNetAudioProcessor::showAraRegionProjectIfActive(
   pushTimelineDisplayOffset();
   if (auto *shown = mainComponent->getProject())
     stampActiveRegionSpan(*shown);
+  // Batch 5.1 (item 4 supplement): a region switch is a bind moment -
+  // the newly shown project's globals become the master values, so
+  // sync the caches and push them to the APVTS mirrors now instead
+  // of leaving the previously shown clip's values in place.
+  if (auto *shown = mainComponent->getProject()) {
+    cachedPitchOffset = shown->getGlobalPitchOffset();
+    cachedFormantShift = shown->getFormantShift();
+    syncApvtsGlobalsFromProject(*shown);
+  }
   mainComponent->bindRealtimeProcessor(realtimeProcessor);
   canvasShowsActiveAraRegion = true;
   mainComponent->hideAnalysisProgress();
@@ -3480,6 +3561,16 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
     // the show path below pushes the display offset.
     if (!liveKey.isEmpty())
       recordActiveRegionWindowOrigin(*archivedState.project);
+    // Batch 5.1: ... and it redefines the globals the processor
+    // mirrors. Sync the change-detection caches and the APVTS
+    // parameters from the restored project, so values left over from
+    // another clip (or from a stale host-side parameter) cannot be
+    // written back over it by checkParameterChanges.
+    if (!liveKey.isEmpty()) {
+      cachedPitchOffset = archivedState.project->getGlobalPitchOffset();
+      cachedFormantShift = archivedState.project->getFormantShift();
+      syncApvtsGlobalsFromProject(*archivedState.project);
+    }
     archivedState.ensureUndoManager()->clear();
     for (auto& entry : trackUndoManagers) entry.second->removeContext(regionKey);
 

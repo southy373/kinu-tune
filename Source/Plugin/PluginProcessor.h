@@ -101,6 +101,12 @@ public:
   void requestPluginProjectRender(const Project &project,
                                   PitchNetAudioModification* target = nullptr);
   void updateProjectStateFromEditor(const Project &project);
+  /** Batch 5.1: the project is the master for the two APVTS globals
+      (pitchOffset / formantShift); the host parameters are mirrors.
+      Pushes the project's values into the APVTS parameters wherever
+      they have drifted apart, so checkParameterChanges never writes a
+      stale host value back over a fader move. */
+  void syncApvtsGlobalsFromProject(const Project &project);
   void requestCapturedAudioAnalysis(const juce::AudioBuffer<float> &buffer,
                                     double sampleRate,
                                     double timelineOffsetSeconds);
