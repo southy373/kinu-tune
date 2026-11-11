@@ -19,7 +19,17 @@ constexpr float FREQ_A4 = 440.0f;
 
 // UI constants
 constexpr float DEFAULT_PIXELS_PER_SECOND = 100.0f;
-constexpr float DEFAULT_PIXELS_PER_SEMITONE = 45.0f;
+// Batch 4 fix (0.4.2): the default vertical scale drops from 45 to
+// 8 px/semitone. With the automatic initial fit gone, the opening
+// view is this fixed scale (centred on MIDI 48-60 by the piano roll's
+// constructor); 8 is where the old automatic vertical fit used to
+// land on the user's material (trial log, 2026-11-11: ppst 8.0-8.1
+// after fitting), which is the user's reference for "smaller at
+// open". At this scale the full 66-semitone pitch range (528 px)
+// fits the roll height of a typical editor window, so segments are
+// on screen without any fit; detail work zooms in from there. (8 is
+// also MIN_PIXELS_PER_SEMITONE - no wider vertical zoom exists.)
+constexpr float DEFAULT_PIXELS_PER_SEMITONE = 8.0f;
 // Widest horizontal zoom. Low enough that "Zoom Full" (Shift+F) fits a
 // song-length take (about 9 minutes in 1100 px); the piano roll's own
 // limit is the larger of this and "whole timeline in view".

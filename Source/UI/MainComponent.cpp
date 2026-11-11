@@ -532,8 +532,12 @@ MainComponent::MainComponent(bool enableAudioDevice)
 
   // Left side panel (slides in from the left, same width as the right panel).
   workspace.setLeftPanelContent("tracks", TR("panel.tracks"), &trackListPanel);
-  // Batch 3: the left panel starts expanded too.
-  workspace.showLeftPanel(true);
+  // Batch 4 fix (0.4.2): the track panel starts closed (reversing the
+  // batch 3 choice to open it). The editor is worked one region at a
+  // time, so the panel only cost piano-roll width on every open; the
+  // toolbar's track button still opens it on demand. The slide state
+  // already defaults to closed, so this call is a no-op safeguard.
+  workspace.showLeftPanel(false);
   trackListPanel.onPreferredHeightChanged = [this]()
   {
     workspace.refreshLeftPanelContentHeight();
@@ -1775,9 +1779,21 @@ void MainComponent::zoomToFull()
   auto *project = getProject();
   if (project == nullptr)
     return;
-  // The piano roll's widest zoom shows the whole timeline (down to
-  // MIN_PIXELS_PER_SECOND for a long one); start at its left edge.
-  pianoRoll.setPixelsPerSecond(0.0f, false);
+  // Fit the content into the view and start at its left edge. Batch 4
+  // fix (0.4.2): the fit measures the content length
+  // (getFitTimelineLength()), not the scrollable timeline - passing 0
+  // here used to delegate the fit to setPixelsPerSecond's minimum-zoom
+  // clamp, which measures the full timeline including the host extents
+  // the playhead has reached, so a fit firing after playback had
+  // ranged past the region compressed the content into a sliver at
+  // the front of the view.
+  const int visibleWidth = pianoRoll.getVisibleContentWidth();
+  const double fitLength = pianoRoll.getFitTimelineLength();
+  if (visibleWidth > 0 && fitLength > 0.0)
+    pianoRoll.setPixelsPerSecond(
+        static_cast<float>(visibleWidth / fitLength), false);
+  else
+    pianoRoll.setPixelsPerSecond(0.0f, false);
   pianoRoll.setScrollX(pianoRoll.getTimelineStart() * pianoRoll.getPixelsPerSecond());
   onZoomChanged(pianoRoll.getPixelsPerSecond());
   if (pianoRoll.onScrollChanged)

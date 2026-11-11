@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 
 // Batch 3.2: always-on diagnostics for the piano-roll view state.
 //
@@ -76,14 +77,31 @@ namespace ViewStateDiagnostics
                ", waveformSamples=" + juce::String(waveformSamples) + "}";
     }
 
+    namespace detail
+    {
+        inline void appendLine(const juce::String &message)
+        {
+            auto logFile = PlatformPaths::getLogFile(
+                "viewstate_" + AppLogger::getSessionId() + ".txt");
+            if (logFile == juce::File())
+                return;
+            const auto timestamp =
+                juce::Time::getCurrentTime().toString(true, true, true, true);
+            logFile.appendText("[" + timestamp + "] " + message + "\n");
+        }
+    } // namespace detail
+
     inline void logLine(const juce::String &message)
     {
-        auto logFile = PlatformPaths::getLogFile(
-            "viewstate_" + AppLogger::getSessionId() + ".txt");
-        if (logFile == juce::File())
-            return;
-        const auto timestamp =
-            juce::Time::getCurrentTime().toString(true, true, true, true);
-        logFile.appendText("[" + timestamp + "] " + message + "\n");
+        // Batch 4 fix (0.4.2): head each session's log with the app
+        // version, so a trial log names the build that produced it.
+        // The session id is one per process, so once per process is
+        // once per session file.
+        static std::once_flag sessionHeaderFlag;
+        std::call_once(sessionHeaderFlag, [] {
+            detail::appendLine("session-start version=" +
+                               AppLogger::getAppVersion());
+        });
+        detail::appendLine(message);
     }
 } // namespace ViewStateDiagnostics

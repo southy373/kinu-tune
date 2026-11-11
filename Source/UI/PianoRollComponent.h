@@ -199,10 +199,11 @@ public:
   // restored scroll parked far past the content), refit the view to the
   // content and return true.
   bool recoverIfNoContentVisible(const char *reason);
-  // Batch 4 (diagnosis candidate E): a restored viewport supersedes
-  // the one-time initial fit. MainComponent::restoreViewportState
-  // calls this after applying a stored state, so a later resize()
-  // cannot run the fit and overwrite the restored view.
+  // Batch 4 (diagnosis candidate E) added this so a restored
+  // viewport superseded the one-time initial fit. Batch 4 fix
+  // (0.4.2) abolished the initial fit itself, so nothing reads the
+  // flag any more; the call from MainComponent::restoreViewportState
+  // is retained as a no-op safeguard.
   void suppressInitialFit() { initialFitDone = true; }
   // Batch 3.2: append one diagnostics line with both view-state stores
   // and the bound project's summary (see ViewStateDiagnostics).
@@ -213,6 +214,15 @@ public:
   // expressed in project time, in Track mode (may be negative).
   double getTimelineStart() const;
   double getTimelineLength() const;
+  // Batch 4 fix (0.4.2): the length horizontal fits measure against.
+  // In Clip mode a fit measures the content only - the project
+  // duration plus the one writable bar ARA region projects get -
+  // never the host extents the playhead has reached: a fit that
+  // measured those compressed the content into a sliver at the front
+  // of the view whenever it fired after playback had ranged far past
+  // the region. Track mode keeps the scroll ruler above. The scroll
+  // range itself (getTimelineLength()) is unchanged either way.
+  double getFitTimelineLength() const;
   // Host-timeline seconds at the left edge of the view.
   double getHostScrollSeconds() const;
 
@@ -446,9 +456,10 @@ private:
       Note *note); // Recalculate F0 from base pitch + delta after undo/redo
 
   Project *project = nullptr;
-  // Batch 3: the first project with segments fitted to the view, and
-  // whether that one-time initial fit has happened for it. The fit runs
-  // from resized(), the first moment the real size is known.
+  // Batch 3's one-time initial fit armed on these; batch 4 fix
+  // (0.4.2) abolished the fit, so they are vestigial - only
+  // suppressInitialFit() still writes initialFitDone, and nothing
+  // reads either field.
   Project *initialFitProject = nullptr;
   bool initialFitDone = true;
   PitchUndoManager *undoManager = nullptr;

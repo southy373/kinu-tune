@@ -8,7 +8,7 @@ if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
         "macOS target architectures" FORCE)
 endif()
 
-project(PitchNet VERSION 0.1.4) # Kinu Tune version (based on PitchNet 0.7.2)
+project(PitchNet VERSION 0.4.2) # Kinu Tune version (based on PitchNet 0.7.2)
 
 # Fail fast on a 32-bit toolchain. Every ONNX Runtime package selected below is
 # x64/arm64 only, so a 32-bit build cannot link - it dies much later with a wall
@@ -1000,6 +1000,10 @@ target_compile_definitions(pitchnet_core PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_MODAL_LOOPS_PERMITTED=1
+    # Batch 4 fix (0.4.2): the always-on session logs (bigvgan /
+    # viewstate) head each session with the app version, so a trial
+    # log names the build that produced it.
+    PITCHNET_APP_VERSION="${PROJECT_VERSION}"
     PITCHNET_PROJECT_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Resources")
 
 target_compile_definitions(pitchnet_ui PUBLIC

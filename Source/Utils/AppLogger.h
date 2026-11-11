@@ -51,6 +51,18 @@ public:
         juce::Time::getCurrentTime().formatted("%Y%m%d_%H%M%S");
     return sessionId;
   }
+
+  // The application version (the CMake project version, passed in as
+  // PITCHNET_APP_VERSION). Used by the always-on session logs, which
+  // are written in every build - unlike LOG() above - so they cannot
+  // go through getApplicationVersion() on a JUCEApplication instance.
+  static juce::String getAppVersion() {
+#ifdef PITCHNET_APP_VERSION
+    return PITCHNET_APP_VERSION;
+#else
+    return {};
+#endif
+  }
 };
 
 #if PITCHNET_LOGGING_ENABLED

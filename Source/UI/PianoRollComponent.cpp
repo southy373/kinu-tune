@@ -737,30 +737,16 @@ void PianoRollComponent::resized()
     }
   }
 
-  // Batch 3: opening a project starts with every segment in view
-  // (horizontal fit to the content, vertical fit to the segments' pitch
-  // range - MainComponent::zoomToFull does both). It can only run once
-  // the component has its real size, and analysis may deliver the
-  // segments after the project was bound, so the check stays armed
-  // until a project with segments meets a non-zero size.
-  if (!initialFitDone && project != nullptr &&
-      project == initialFitProject && getVisibleContentWidth() > 0 &&
-      getVisibleContentHeight() > 0)
-  {
-    bool hasSegment = false;
-    for (const auto &note : project->getNotes())
-      if (!note.isRest())
-      {
-        hasSegment = true;
-        break;
-      }
-    if (hasSegment)
-    {
-      initialFitDone = true;
-      if (onZoomFullRequested)
-        onZoomFullRequested();
-    }
-  }
+  // Batch 4 fix (0.4.2): there is deliberately no automatic fit
+  // here. Batch 3 fitted the view to the content once a project with
+  // segments met a real size, but that was a misreading of the
+  // original request (a smaller fixed vertical scale and a larger
+  // default window, not a fit): the armed fit could also fire late -
+  // on the track panel's slide or a window resize - and squash the
+  // view the user had settled on. Opening now leaves zoom and scroll
+  // exactly where the defaults / restored viewport put them; fitting
+  // happens only when the user asks (zoom-to-full command, Alt+double
+  // click) or when the recovery path refits a content-free view.
 }
 
 void PianoRollComponent::drawBackgroundWaveform(
@@ -2883,11 +2869,8 @@ void PianoRollComponent::setProject(Project *proj)
   liveTimelineEndSeconds = 0.0;
   liveRecordingSampleRate = 0.0;
   project = proj;
-  if (proj != initialFitProject)
-  {
-    initialFitProject = proj;
-    initialFitDone = proj == nullptr;
-  }
+  // Batch 4 fix (0.4.2): binding a project no longer arms an initial
+  // fit (the fit itself is abolished - see resized()).
   hoveredNote = nullptr;
   setPreviewPlaybackState(false, 0, 0);
   selectedScaleMode =
@@ -5104,11 +5087,14 @@ void PianoRollComponent::fitViewToContent()
   scrollY = 0.0;
   syncViewStateToCoordMapper();
 
-  // Horizontal: fit the whole timeline into the view when its extent is
+  // Horizontal: fit the content into the view when its extent is
   // known (the same state the batch-3 initial fit produces), otherwise
-  // fall back to the default zoom at the timeline start.
+  // fall back to the default zoom at the timeline start. The fit
+  // measures getFitTimelineLength(), not the scroll ruler: a recovery
+  // fit must not compress the content against host extents the
+  // playhead has reached (batch 4 fix, 0.4.2).
   const int visibleWidth = getVisibleContentWidth();
-  const double totalTime = getTimelineLength();
+  const double totalTime = getFitTimelineLength();
   float fittedPps = DEFAULT_PIXELS_PER_SECOND;
   if (visibleWidth > 0 && totalTime > 0.0)
     fittedPps = juce::jlimit(MIN_PIXELS_PER_SECOND, MAX_PIXELS_PER_SECOND,
@@ -5289,6 +5275,27 @@ double PianoRollComponent::getTimelineDuration() const
 double PianoRollComponent::getTimelineLength() const
 {
   return std::max(0.0, getTimelineDuration() - getTimelineStart());
+}
+
+double PianoRollComponent::getFitTimelineLength() const
+{
+  if (trackViewMode)
+    return getTimelineLength();
+
+  // Clip mode: the content is the project itself, plus the one bar of
+  // writable-looking canvas ARA region projects get - the project
+  // branch of getTimelineDuration(), minus the live/host extents.
+  // Those extents grow with ordinary host behaviour (the playhead
+  // passing the region, a click far down the song) and are not
+  // content, so a fit must not measure against them.
+  const double projectDuration =
+      project ? static_cast<double>(project->getAudioData().getDuration())
+              : 0.0;
+  double contentDuration = projectDuration;
+  if (project != nullptr &&
+      !project->getAudioData().playbackRegionRanges.empty())
+    contentDuration += getTimelineBarSeconds();
+  return std::max(0.0, contentDuration - getTimelineStart());
 }
 
 double PianoRollComponent::clampScrollX(double x) const

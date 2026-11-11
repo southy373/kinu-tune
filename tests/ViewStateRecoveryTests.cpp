@@ -39,6 +39,12 @@ struct PianoRollComponentTestAccess
   {
     roll.viewState.scrollY = y;
   }
+  // fitViewToContent() is private (the recovery path); the recovery
+  // fit scenario drives it through this hook.
+  static void fitViewToContent(PianoRollComponent &roll)
+  {
+    roll.fitViewToContent();
+  }
 };
 
 struct MainComponentTestAccess
@@ -46,8 +52,8 @@ struct MainComponentTestAccess
   static PianoRollComponent &roll(MainComponent &mc) { return mc.pianoRoll; }
 
   // Binds the controller's project the way the plug-in does, so
-  // MainComponent::getProject() (and therefore zoomToFull, used by
-  // the initial fit) sees the same project as the piano roll.
+  // MainComponent::getProject() (and therefore zoomToFull) sees the
+  // same project as the piano roll.
   static void wireController(MainComponent &mc, EditorController &controller,
                              PitchUndoManager &history)
   {
@@ -97,8 +103,10 @@ int visibleNotes(PianoRollComponent &roll)
   return PianoRollComponentTestAccess::notesInVisibleRange(roll);
 }
 
-// A standalone roll fitted the way the app's initial fit fits it
+// A standalone roll fitted the way the app's zoom-to-full fits it
 // (MainComponent::zoomToFull equivalent, as in PianoRollResizeTests).
+// Since 0.4.2 opening a project no longer fits automatically, the
+// harness invokes the fit request itself after binding.
 void fitRoll(PianoRollComponent &roll, Project &project)
 {
   roll.onZoomFullRequested = [&roll, &project] {
@@ -117,6 +125,7 @@ void fitRoll(PianoRollComponent &roll, Project &project)
   roll.setSize(900, 500);
   roll.setProject(&project);
   roll.setSize(901, 500); // a resized() with the project bound
+  roll.onZoomFullRequested();
   drainMessages();
 }
 
@@ -449,9 +458,11 @@ int main()
   }
 
   // --- J (batch 4, diagnosis candidate E): reopening with a stored
-  // viewport must not be overwritten by the one-time initial fit.
-  // Binding a NEW project re-arms the fit; restoring a distinctive
-  // viewport and then resizing must leave the restored values alone.
+  // viewport must not be overwritten by anything automatic. Restoring
+  // a distinctive viewport and then resizing must leave the restored
+  // values alone. (Batch 4's suppression made this true against the
+  // one-time initial fit; since 0.4.2 there is no automatic fit at
+  // all, and this scenario guards the restore path staying quiet.)
   {
     auto makeWideProject = [](Project &proj) {
       auto &audio = proj.getAudioData();
@@ -503,9 +514,9 @@ int main()
     CHECK(storesAgree(rollB));
     rollB.setProject(nullptr);
 
-    // Control: the same rebind WITHOUT a restore still gets the
-    // initial fit on resize (the suppression is specific to the
-    // restore path, not a disabled fit).
+    // Control: the same rebind WITHOUT a restore gets no fit either
+    // (0.4.2) - the view stays at the default zoom, under which the
+    // whole project is on screen at these sizes.
     EditorController controllerC(false);
     makeWideProject(*controllerC.getProject());
     PitchUndoManager historyC(100);
@@ -518,8 +529,121 @@ int main()
       rollC.setSize(1000, 560);
     drainMessages();
     CHECK(visibleNotes(rollC) == 2);
-    CHECK(rollC.getPixelsPerSecond() < 250.0f); // fitted, not 300
+    CHECK(rollC.getPixelsPerSecond() == DEFAULT_PIXELS_PER_SECOND);
     rollC.setProject(nullptr);
+  }
+
+  // --- K (batch 4 fix, 0.4.2): a horizontal fit measures the
+  // content, not the host extents the playhead has reached. With the
+  // host timeline extended to 300 s (the playhead parked far down
+  // the song), the scroll ruler is still 300 s, but the fit ruler
+  // stays at the ~2.3 s project, and the recovery fit does not
+  // compress the content against the 300 s.
+  {
+    PianoRollComponent roll;
+    fitRoll(roll, project);
+    roll.extendTimelineTo(300.0);
+    CHECK(roll.getTimelineLength() > 250.0);
+    CHECK(roll.getFitTimelineLength() > 0.0);
+    CHECK(roll.getFitTimelineLength() < 10.0);
+
+    PianoRollComponentTestAccess::fitViewToContent(roll);
+    drainMessages();
+    CHECK(roll.getPixelsPerSecond() > 100.0f);
+    CHECK(visibleNotes(roll) == 3);
+    CHECK(storesAgree(roll));
+
+    // Track mode keeps the legacy ruler (the dormant path is
+    // untouched by the fix).
+    roll.setTrackViewMode(true);
+    CHECK(roll.getFitTimelineLength() > 250.0);
+    roll.setTrackViewMode(false);
+  }
+
+  // --- K2 (batch 4 fix, 0.4.2): the same guarantee through
+  // MainComponent::zoomToFull, the path the zoom-full command and
+  // Alt+double-click take.
+  {
+    EditorController controllerD(false);
+    {
+      auto &bound = *controllerD.getProject();
+      auto &audio = bound.getAudioData();
+      audio.sampleRate = SAMPLE_RATE;
+      audio.f0.assign(200, 220.0f);
+      audio.basePitch.assign(200, 57.0f);
+      audio.deltaPitch.assign(200, 0.0f);
+      audio.waveform.setSize(1, 200 * HOP_SIZE);
+      bound.addNote(Note(10, 60, 58));
+      bound.addNote(Note(70, 120, 62));
+      bound.addNote(Note(130, 190, 67));
+    }
+    PitchUndoManager historyD(100);
+    MainComponent mcD(false);
+    MainComponentTestAccess::wireController(mcD, controllerD, historyD);
+    auto &rollD = MainComponentTestAccess::roll(mcD);
+    mcD.setSize(1100, 650);
+    drainMessages();
+    if (rollD.getWidth() <= 0 || rollD.getHeight() <= 0)
+      rollD.setSize(1000, 560); // headless layout may not size the roll
+    drainMessages();
+    CHECK(visibleNotes(rollD) == 3);
+
+    rollD.extendTimelineTo(300.0);
+    CHECK(rollD.getTimelineLength() > 250.0);
+    rollD.onZoomFullRequested(); // == MainComponent::zoomToFull()
+    drainMessages();
+    CHECK(rollD.getPixelsPerSecond() > 100.0f);
+    CHECK(visibleNotes(rollD) == 3);
+    CHECK(storesAgree(rollD));
+    rollD.setProject(nullptr);
+  }
+
+  // --- L (batch 4 fix, 0.4.2): there is no automatic initial fit.
+  // Binding a project and laying out - at open, on the track panel's
+  // slide, on a window resize - must never rewrite zoom or scroll on
+  // its own, whether the segments are there from the start or arrive
+  // late (analysis finishing). The fit request fires only when it is
+  // invoked (zoom-to-full command, Alt+double-click, recovery).
+  {
+    Project lateProject;
+    {
+      auto &audio = lateProject.getAudioData();
+      audio.sampleRate = SAMPLE_RATE;
+      audio.f0.assign(200, 220.0f);
+      audio.basePitch.assign(200, 57.0f);
+      audio.deltaPitch.assign(200, 0.0f);
+      audio.waveform.setSize(1, 200 * HOP_SIZE);
+    }
+
+    PianoRollComponent roll;
+    int fitCount = 0;
+    roll.onZoomFullRequested = [&fitCount] { ++fitCount; };
+    roll.setProject(&lateProject);
+    roll.setSize(900, 500); // opening layout settles, still no segments
+    drainMessages();
+    CHECK(fitCount == 0);
+
+    // Analysis delivers the segments into the same project object.
+    lateProject.addNote(Note(10, 60, 58));
+    lateProject.addNote(Note(70, 120, 62));
+    lateProject.addNote(Note(130, 190, 67));
+    roll.setSize(920, 500); // an unrelated resize: the panel slide, say
+    drainMessages();
+    CHECK(fitCount == 0);
+    CHECK(roll.getPixelsPerSecond() == DEFAULT_PIXELS_PER_SECOND);
+
+    // Segments present from the start: still no automatic fit - the
+    // view stays exactly at the defaults through layout and resize.
+    PianoRollComponent roll2;
+    int fitCount2 = 0;
+    roll2.onZoomFullRequested = [&fitCount2] { ++fitCount2; };
+    roll2.setProject(&project);
+    roll2.setSize(900, 500);
+    roll2.setSize(1000, 560);
+    drainMessages();
+    CHECK(fitCount2 == 0);
+    CHECK(roll2.getPixelsPerSecond() == DEFAULT_PIXELS_PER_SECOND);
+    CHECK(roll2.getPixelsPerSemitone() == DEFAULT_PIXELS_PER_SEMITONE);
   }
 
   std::cout << "ViewStateRecoveryTests passed" << std::endl;

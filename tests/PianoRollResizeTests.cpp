@@ -106,7 +106,7 @@ int main()
   Project project = makeProject();
 
   PianoRollComponent roll;
-  // Mirror what the initial fit requests in the app
+  // Mirror what zoom-to-full requests in the app
   // (MainComponent::zoomToFull): horizontal fit to the whole timeline,
   // vertical fit to the analyzed range widened by the fit margin.
   roll.onZoomFullRequested = [&roll, &project] {
@@ -128,9 +128,12 @@ int main()
   roll.setSize(900, 500);
   roll.setProject(&project);
   roll.setSize(901, 500); // a resized() with the project bound
+  // Since 0.4.2 opening no longer fits automatically; invoke the fit
+  // request (the app's zoom-to-full) directly.
+  roll.onZoomFullRequested();
   drainMessages();
 
-  // After the initial fit every segment is on screen - strictly inside
+  // After the fit every segment is on screen - strictly inside
   // the view, not flush against its edges, because of the margin.
   for (const auto &note : project.getNotes())
     CHECK(noteOnScreen(roll, static_cast<float>(note.getMidiNote())));

@@ -49,6 +49,10 @@ BigVGANVocoder::BigVGANVocoder()
     auto time = std::chrono::system_clock::to_time_t(now);
     *logFile << "\n========== BigVGAN Session Started at "
              << std::ctime(&time) << " ==========\n";
+    // Batch 4 fix (0.4.2): name the build in the log header, so a
+    // trial log shows which version produced it.
+    *logFile << "FlexaTune version: "
+             << AppLogger::getAppVersion().toStdString() << "\n";
     logFile->flush();
   }
 
