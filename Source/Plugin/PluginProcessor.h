@@ -194,6 +194,17 @@ public:
   // timeline, so the ruler and playhead line up with the drawn waveform.
   // Display only - nothing in the project moves. May be negative.
   void pushTimelineDisplayOffset() const;
+  // Batch 5.1: record the active region project's analysis-window
+  // origin (seconds of modification time) on the processor. The span
+  // conversion reads this record instead of whichever Project happens
+  // to be reachable at push time: the display pushes run right after
+  // the project is moved off its cache slot and before the canvas flag
+  // flips, so the old lookup found no project, fell back to origin
+  // zero, and the ruler/playhead shifted by the origin itself (the
+  // ~5 s offset of the 0.5.0 trial). Called wherever the active
+  // region's project is established: analysis completion, archive
+  // restore, region selection, editor bind, edit write-back.
+  void recordActiveRegionWindowOrigin(const Project &project);
   juce::String getActiveAraRegionKey() const { return activeRegionKey; }
   juce::String getActiveAraRegionSelector() const {
     return activeRegionSelector;
@@ -480,6 +491,11 @@ private:
   juce::int64 activeStartSampleInModification = 0;
   double activeRegionStartSeconds = 0.0;
   double activeRegionEndSeconds = 0.0;
+  // Batch 5.1: the active region project's window origin, in seconds of
+  // modification time (see recordActiveRegionWindowOrigin). Reset when
+  // the selection switches to a region with no project yet; the
+  // analysis/restore that establishes the project records the real one.
+  double activeRegionWindowOriginSeconds = 0.0;
   // Dedicated controller for per-region canvas analysis, kept separate from the
   // composite araAnalysisController so the two never interfere.
   std::unique_ptr<EditorController> regionCanvasController;

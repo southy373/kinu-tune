@@ -1701,6 +1701,10 @@ void PitchNetAudioProcessor::updateProjectStateFromEditor(
   // audio, so the renderer played the composite's leading silence at the
   // region position (the old realtime-processor safety net masked this).
   if (canvasShowsActiveAraRegion && activeRegionKey.isNotEmpty()) {
+    // Batch 5.1: the write-back project IS the active region's window;
+    // keep the recorded origin in step with it (hydration can replace
+    // the canvas project without a selection change).
+    recordActiveRegionWindowOrigin(stateProject);
     if (activeModification != nullptr) {
       juce::MemoryBlock projectArchive;
       if (serializeAraRegionProject(activeRegionKey, projectArchive))
@@ -2252,6 +2256,12 @@ void PitchNetAudioProcessor::setMainComponent(IMainView *mc) {
     }
 
 #if JucePlugin_Enable_ARA
+    // Batch 5.1: refresh the recorded window origin from the project
+    // just bound to the canvas, so the push below uses this region's
+    // window even when the bind path never passed a selection change.
+    if (canvasShowsActiveAraRegion)
+      if (auto *bound = mc->getProject())
+        recordActiveRegionWindowOrigin(*bound);
     // The active region is normally set before the editor exists, so every
     // push on that path found mainComponent null and returned without doing
     // anything. Push once here so the ruler lines up with the host timeline
@@ -2561,6 +2571,7 @@ void PitchNetAudioProcessor::installAraRegionProject(
   }
   state.project = std::move(project);
   if (key == activeRegionKey) {
+    recordActiveRegionWindowOrigin(*state.project);
     updateActiveAraRegionProperties(region);
     showAraRegionProjectIfActive(key);
   }
@@ -2629,6 +2640,10 @@ void PitchNetAudioProcessor::setActiveAraRegion(
                                     region->getEndInPlaybackTime());
   activeStartSampleInModification =
       region->getStartInAudioModificationSamples();
+  // Batch 5.1: the recorded window origin belongs to the outgoing
+  // region's project. Drop it with the selection; the incoming
+  // project's establishment (show, analysis, restore) records its own.
+  activeRegionWindowOriginSeconds = 0.0;
 
   auto &incomingState = araRegions[key];
   auto *incomingUndoManager = incomingState.ensureUndoManager();
@@ -2670,6 +2685,10 @@ void PitchNetAudioProcessor::setActiveAraRegion(
       pendingRegionCanvasAnalysisKey.clear();
       regionCanvasAnalysisPending.store(false);
       attachMacroParameters(*it->second.project);
+      // Batch 5.1: record the origin while the project is still in its
+      // cache slot - after the exchange below it is unreachable from
+      // here, which is exactly when the display push runs.
+      recordActiveRegionWindowOrigin(*it->second.project);
       auto displaced =
           mainComponent->exchangeProject(std::move(it->second.project));
       juce::ignoreUnused(displaced);
@@ -2715,26 +2734,26 @@ PitchNetAudioProcessor::activeRegionSpanInModificationTime() const {
   return {start, start + length};
 }
 
+void PitchNetAudioProcessor::recordActiveRegionWindowOrigin(
+    const Project &project) {
+  activeRegionWindowOriginSeconds =
+      modificationOriginSeconds(project.getAudioData());
+}
+
 std::pair<double, double>
 PitchNetAudioProcessor::activeRegionSpanInProjectTime() const {
   const auto span = activeRegionSpanInModificationTime();
-  // The project that would be (or is being) shown for the active
-  // region supplies the window origin: the canvas project when it
-  // shows this region, otherwise the cached one. No project yet (or a
-  // whole-modification one) means the two grids coincide.
-  const Project *project = nullptr;
-  if (canvasShowsActiveAraRegion && mainComponent != nullptr)
-    project = mainComponent->getProject();
-  if (project == nullptr) {
-    const auto it = araRegions.find(activeRegionKey);
-    if (it != araRegions.end())
-      project = it->second.project.get();
-  }
-  const double originSeconds =
-      project != nullptr ? modificationOriginSeconds(project->getAudioData())
-                         : 0.0;
-  return {std::max(0.0, span.first - originSeconds),
-          std::max(0.0, span.second - originSeconds)};
+  // Batch 5.1: the origin is the processor-side record, NOT a lookup
+  // into whichever project is reachable right now. The display pushes
+  // run at exactly the moments when no project is reachable (moved off
+  // the cache slot, canvas flag not yet set), and the old lookup then
+  // fell back to origin zero - shifting the ruler and playhead by the
+  // origin seconds. The record is refreshed wherever the active
+  // region's project is established, so it is already correct before
+  // any push can run. A whole-modification project records zero, where
+  // the two grids coincide.
+  return projectSpanForModificationSpan(span.first, span.second,
+                                        activeRegionWindowOriginSeconds);
 }
 
 void PitchNetAudioProcessor::pushTimelineDisplayOffset() const {
@@ -3055,6 +3074,11 @@ void PitchNetAudioProcessor::analyzeAraRegionForCanvas(
             activeStartSampleInModification = startSampleInModification;
           }
         }
+
+        // Batch 5.1: this project is now the active region's window;
+        // record its origin before the canvas push below reads it.
+        if (regionKey == activeRegionKey)
+          recordActiveRegionWindowOrigin(*project);
 
         // Paint it onto the canvas if it is still the active region.
         if (regionKey == activeRegionKey && mainComponent) {
@@ -3424,6 +3448,7 @@ bool PitchNetAudioProcessor::showAraRegionProjectIfActive(
   regionCanvasAnalysisPending.store(false);
   auto *regionUndoManager = it->second.ensureUndoManager();
   attachMacroParameters(*it->second.project);
+  recordActiveRegionWindowOrigin(*it->second.project);
   auto displaced =
       mainComponent->exchangeProject(std::move(it->second.project));
   juce::ignoreUnused(displaced);
@@ -3467,6 +3492,11 @@ void PitchNetAudioProcessor::restoreAraRegionProject(const juce::String &regionK
 
     auto &archivedState = araRegions[regionKey];
     archivedState.project = std::move(project);
+    // Batch 5.1: a restored project for the ACTIVE region redefines
+    // the window the display works from; record its origin now, before
+    // the show path below pushes the display offset.
+    if (!liveKey.isEmpty())
+      recordActiveRegionWindowOrigin(*archivedState.project);
     archivedState.ensureUndoManager()->clear();
     for (auto& entry : trackUndoManagers) entry.second->removeContext(regionKey);
 

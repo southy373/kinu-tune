@@ -265,6 +265,46 @@ void testAnalysisWindowCoversShortSource() {
   std::cout << "analysis window covers a short source whole: ok\n";
 }
 
+// Batch 5.1: the display offset regression. A region that starts 10 s
+// into its source was analysed from a window whose origin is NOT zero
+// (5 s in, under the old 5 s margin). The span the canvas focuses and
+// the ruler offset is built from must be the modification span shifted
+// by that origin. The 0.5.0 code looked the origin up in whichever
+// project was reachable at push time, found none (the project had just
+// been moved off its cache slot), and used zero - so the ruler and
+// playhead sat the full origin (here: 5 s) away from the host's.
+void testProjectSpanShiftsByWindowOrigin() {
+  // Region span in modification time: [10 s, 14 s).
+  const auto span = projectSpanForModificationSpan(10.0, 14.0, 5.0);
+  CHECK(span.first == 5.0);
+  CHECK(span.second == 9.0);
+
+  // The display offset is playback start minus project span start; it
+  // must put the span's start back on the region's host position.
+  const double playbackStart = 20.0;
+  const double offset = playbackStart - span.first;
+  CHECK(span.first + offset == playbackStart);
+  CHECK(span.second + offset == playbackStart + 4.0);
+
+  // A window that starts at the region itself (margin 0) puts the
+  // region at project zero.
+  const auto atZero = projectSpanForModificationSpan(10.0, 14.0, 10.0);
+  CHECK(atZero.first == 0.0);
+  CHECK(atZero.second == 4.0);
+
+  // Whole-modification projects (origin zero) are the identity.
+  const auto identity = projectSpanForModificationSpan(10.0, 14.0, 0.0);
+  CHECK(identity.first == 10.0);
+  CHECK(identity.second == 14.0);
+
+  // A span reaching before the window clamps at project zero.
+  const auto clamped = projectSpanForModificationSpan(3.0, 6.0, 5.0);
+  CHECK(clamped.first == 0.0);
+  CHECK(clamped.second == 1.0);
+
+  std::cout << "project span shifts by the window origin: ok\n";
+}
+
 void testAnalysisWindowRejectsEmptyUnion() {
   CHECK(computeAnalysisWindowSamples(100, 100, 9600000, 48000.0).getLength() ==
         0);
@@ -286,6 +326,7 @@ int main() {
   testAnalysisWindowAppliesMargin();
   testAnalysisWindowClampsToSource();
   testAnalysisWindowCoversShortSource();
+  testProjectSpanShiftsByWindowOrigin();
   testAnalysisWindowRejectsEmptyUnion();
 
   std::cout << "ProjectModificationRangeTests passed\n";

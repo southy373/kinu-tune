@@ -520,9 +520,22 @@ void PitchNetAudioProcessorEditor::setupARAMode() {
         const double sampleRate =
             audioData.sampleRate > 0 ? static_cast<double>(audioData.sampleRate)
                                      : static_cast<double>(SAMPLE_RATE);
+        // Batch 5.1: the frames are project (window) time, whose zero
+        // is the analysis window's origin, while startPreviewRange
+        // speaks modification time. Add the origin back, or the
+        // audition plays that many seconds early (silently, when the
+        // shifted range lands outside every region). Whole-modification
+        // projects record origin zero and are unaffected.
+        const double originSeconds =
+            audioData.modificationSourceSampleRate > 0.0
+                ? static_cast<double>(audioData.modificationOriginSamples) /
+                      audioData.modificationSourceSampleRate
+                : 0.0;
         pitchDocController->startPreviewRange(
-            static_cast<double>(startFrame) * HOP_SIZE / sampleRate,
-            static_cast<double>(endFrame) * HOP_SIZE / sampleRate);
+            originSeconds +
+                static_cast<double>(startFrame) * HOP_SIZE / sampleRate,
+            originSeconds +
+                static_cast<double>(endFrame) * HOP_SIZE / sampleRate);
       });
   mainView->setOnStopBackendPreview(
       [pitchDocController]() { pitchDocController->stopPreview(); });

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 // Sample ranges within an ARA audio modification.
@@ -55,6 +56,21 @@ computeAnalysisWindowSamples(juce::int64 unionStart, juce::int64 unionEnd,
   if (end <= start)
     return {};
   return {start, end};
+}
+
+// A span in modification seconds, expressed in project seconds: the
+// project's zero is its analysis window's origin inside the modification,
+// so the origin comes off both ends. Clamped at zero - a span starting
+// before the window (possible when the host reports a region that begins
+// ahead of the analysed range) starts at the project's first frame.
+// Kept as a free function so the conversion the display offset depends
+// on is testable without a DAW or a processor (batch 5.1).
+inline std::pair<double, double>
+projectSpanForModificationSpan(double modificationStartSeconds,
+                               double modificationEndSeconds,
+                               double originSeconds) {
+  return {std::max(0.0, modificationStartSeconds - originSeconds),
+          std::max(0.0, modificationEndSeconds - originSeconds)};
 }
 
 // Frames dirtied by editing, converted to modification samples and merged into
