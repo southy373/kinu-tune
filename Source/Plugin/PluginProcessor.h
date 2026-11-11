@@ -234,8 +234,9 @@ public:
   // document controller after extracting one region's audio. Uses a dedicated
   // controller so it never disturbs the composite analysis / playback pipeline.
   // True when the project contains actual rendered note edits or global
-  // pitch/formant offsets — only such projects publish per-region
-  // processed audio; unedited regions play their original source.
+  // pitch/formant offsets (including the Batch 2 pitch/length percents)
+  // — only such projects publish per-region processed audio; unedited
+  // regions play their original source.
   static bool projectHasRegionEdits(const Project &project);
   void analyzeAraRegionForCanvas(const juce::String &regionKey,
                                  PitchNetAudioModification *modification,

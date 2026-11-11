@@ -476,3 +476,49 @@ inline bool shouldPreserveStoredProject(const Project *stored,
         return false;
     return outgoing == nullptr || projectIsEmptyOfAnalysis(*outgoing);
 }
+
+// The publish-gate decision behind
+// PitchNetAudioProcessor::projectHasRegionEdits (batch 5.1: factored
+// out so the gate is testable without a processor instance, like the
+// write-back guard above): does this project hold anything the host
+// must hear as processed audio, rather than the untouched source?
+//
+// The note comparison is against the original rather than trusting
+// hasRenderedEdit(). That flag is historical: it records that a note
+// once contributed to the persisted composite, and it is only refreshed
+// for commit anchors, so resetting one note cleared its own flag while
+// every other previously-edited note kept the whole region on the
+// resynthesis path. A fully reset region therefore never fell back to
+// the untouched ARA source, and stayed on a re-synthesised blob whose
+// splice boundaries are audible as a click on every syllable.
+//
+// isNeutralForOriginalWaveform() checks timing, pitch, baked delta,
+// offset, formant, volume, tilt, vibrato, drift, smoothing and delta
+// scale, so a note it calls neutral is one the original audio already
+// represents exactly.
+inline bool projectHasPublishableEdits(const Project &project)
+{
+    if (project.getGlobalPitchOffset() != 0.0f ||
+        project.getFormantShift() != 0.0f)
+        return true;
+
+    // Batch 5.1: the Batch 2 percent adjustments are edits too. This
+    // gate predates them and never learned to count them, so a region
+    // whose ONLY edit was the global pitch % rendered correctly and
+    // was then cleared here instead of published - the host kept
+    // playing the original, and the % appeared to work only on regions
+    // that also had a note edit (or stopped working when the last note
+    // edit was undone). The length % is counted symmetrically: scaling
+    // moves the notes' frames, which the neutrality loop below also
+    // sees, but a bare value restored without its frames must not fall
+    // through.
+    if (project.getPitchPercent() != 100.0f ||
+        project.getLengthPercent() != 100.0f)
+        return true;
+
+    for (const auto &note : project.getNotes())
+        if (!note.isRest() && !note.isNeutralForOriginalWaveform())
+            return true;
+
+    return false;
+}
