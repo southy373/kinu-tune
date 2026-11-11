@@ -514,6 +514,16 @@ private:
   RealtimePitchProcessor documentRealtimeProcessor;
   PitchNetAudioProcessor *owningProcessor = nullptr;
   PitchNetAudioProcessor *editorProcessor = nullptr;
+  // Batch 5.1 (item 10): persistent IDs of modifications destroyed
+  // in THIS session. An archive restore naming one of them is
+  // refused (the payload is consumed and dropped, the live
+  // modification starts new): "destroyed, yet its archive comes
+  // back" is the Make-Permanent signature, where the host
+  // re-presents the destroyed modification's payload when the same
+  // file is sent to the extension again. Session-only by design -
+  // the set is never persisted, so a legitimate project reload in a
+  // new session (empty set) is unaffected.
+  std::set<juce::String> destroyedModificationPersistentIds;
   AraPreviewState previewState;
   std::function<bool(juce::MemoryBlock &)> serializeProjectStateCallback;
   std::function<bool(const void *, size_t)> restoreProjectStateCallback;

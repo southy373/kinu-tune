@@ -2039,6 +2039,16 @@ void PitchNetDocumentController::willDestroyAudioModification(
   if (modification == nullptr)
     return;
 
+  // Batch 5.1 (item 10): record the persistent ID on the session
+  // denylist (see the member's comment). This is the destruction
+  // path that also drives the processor's forgetAraModification
+  // below; restore consults the list in doRestoreObjectsFromStream.
+  const auto destroyedId = juce::String(modification->getPersistentID());
+  if (destroyedId.isNotEmpty()) {
+    destroyedModificationPersistentIds.insert(destroyedId);
+    ARA_DIAG("forgetMod archivedId=" + destroyedId + " denylisted=1");
+  }
+
   if (currentPlaybackRegion != nullptr &&
       currentPlaybackRegion->getAudioModification() == audioModification) {
     if (previewState.previewedRegion.load() == currentPlaybackRegion)
@@ -2508,6 +2518,20 @@ bool PitchNetDocumentController::doRestoreObjectsFromStream(
                " matched=" + juce::String(audioModification != nullptr ? 1 : 0) +
                " version=" + juce::String(version) +
                " payloadUsable=" + juce::String(payloadIsUsable ? 1 : 0));
+
+      // Batch 5.1 (item 10): refuse the payload when its ID belongs
+      // to a modification destroyed earlier in this session (the
+      // Make-Permanent signature) - the live modification starts
+      // NEW. The payload bytes are still consumed below (the
+      // unmatched path), so the stream stays aligned; only the
+      // restore calls are skipped.
+      if (payloadIsUsable && audioModification != nullptr &&
+          destroyedModificationPersistentIds.count(persistentID) > 0) {
+        ARA_DIAG("restoreDenied archivedId=" + persistentID +
+                 " reason=destroyedThisSession");
+        audioModification = nullptr;
+        pitchModification = nullptr;
+      }
 
       // Per region: a project JSON and, optionally, rendered processed audio.
       // Read in stream order; restore when the region is matched, otherwise
