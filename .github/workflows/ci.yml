@@ -5,12 +5,40 @@
 # with the host check. The macOS job is kept as a compile-only check (the
 # product code must keep building for macOS, but the test suite no longer
 # runs there).
+#
+# Light mode (manual dispatch only, input check_mode=light) is the smoke
+# gate for small change batches, where a full round (~2 hours, most of it
+# compiling the 35 test executables) is out of proportion to the change.
+# It keeps the parts of the gate that catch breakage a small change can
+# actually cause - the Windows VST3 build, a core subset of the unit tests
+# (model numerics, view-state recovery, state archive, coordinates, paths,
+# plus the SourceGuard architecture rules and any extra tests named in the
+# extra_tests input), and the host check - and skips the macOS job, the
+# BigVGAN model conversion (nothing in the gate consumes the generated
+# models: configure requires only the committed fcpe.onnx and its tables,
+# and no test loads the BigVGAN files), and the remaining test executables.
+# Push and pull-request runs always use the full gate: check_mode only
+# exists as a dispatch input and defaults to full.
 name: CI
 
 on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      check_mode:
+        description: "full = the whole gate (default); light = small-change smoke gate (Windows only, no model conversion, core test subset)"
+        type: choice
+        options:
+          - full
+          - light
+        default: full
+        required: true
+      extra_tests:
+        description: "Light mode only: extra test targets to build and run, separated by spaces or commas (e.g. PitchShiftEngineTests)"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -21,6 +49,9 @@ concurrency:
 
 jobs:
   macos-tests:
+    # Skipped in light mode only; on push/PR the input is empty, which is
+    # not "light", so the job runs exactly as before.
+    if: ${{ inputs.check_mode != 'light' }}
     runs-on: macos-15
     timeout-minutes: 120
     steps:
@@ -57,23 +88,33 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      # The BigVGAN models (the main opset 20 export and the opset 17
-      # variant, ~490 MB each) are generated, never committed. The
-      # speech build offers AI Resynthesis only when the main file is
-      # present, so CI produces them the same way a local developer
-      # would.
+      - name: Report the check mode
+        run: echo "check_mode=${{ inputs.check_mode || 'full' }} event=${{ github.event_name }}"
+
+      # The BigVGAN models (the main opset 20 export and the
+      # ConvTranspose-free noct variant, ~490 MB each) are generated, never
+      # committed. The speech build offers AI Resynthesis only when the
+      # main file is present, so CI produces them the same way a local
+      # developer would. Light mode skips the conversion: nothing in the
+      # gate reads the generated files (configure requires only the
+      # committed fcpe.onnx and its tables, ModelInferenceTests loads
+      # fcpe.onnx, and the host check never reaches analysis, where the
+      # BigVGAN sessions would be created).
       - name: Set up Python for BigVGAN model conversion
+        if: ${{ inputs.check_mode != 'light' }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install BigVGAN conversion dependencies
+        if: ${{ inputs.check_mode != 'light' }}
         run: |
           python -m pip install --upgrade pip
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0
           python -m pip install onnx==1.23.2 onnxscript==0.7.2 onnxruntime==1.19.2 huggingface_hub==2.4.0 matplotlib scipy librosa
 
       - name: Prepare BigVGAN models
+        if: ${{ inputs.check_mode != 'light' }}
         run: python tools/convert_bigvgan.py
 
       # PITCHNET_BUILD_TESTS registers the tests; since batch 2 the full
@@ -88,6 +129,37 @@ jobs:
       - name: Build the VST3
         run: cmake --build build --config Release --target PitchNetPlugin_VST3 --parallel
 
+      # Light mode: compose the test subset once so the build and run
+      # steps below select exactly the same tests. The base set guards the
+      # invariants small batches most often touch; the three SourceGuard
+      # rules are added for the run step (they are CMake script checks and
+      # need no build). Extra names from the dispatch input are limited to
+      # word characters and hyphens so the ctest pattern stays well-formed;
+      # an unknown name then fails the build step instead of passing
+      # silently.
+      - name: Select the light test set
+        if: ${{ inputs.check_mode == 'light' }}
+        shell: pwsh
+        env:
+          EXTRA_TESTS: ${{ inputs.extra_tests }}
+        run: |
+          $base = @("ModelInferenceTests", "ViewStateRecoveryTests", "PluginStateArchiveTests", "TimelineCoordinateTests", "PlatformPathsTests")
+          $extras = @($env:EXTRA_TESTS -split '[\s,]+' | Where-Object { $_ -match '^[\w-]+$' })
+          $targets = @($base + $extras | Select-Object -Unique)
+          "LIGHT_TEST_TARGETS=$($targets -join ' ')" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $guards = @("SourceGuard_pitch-writes", "SourceGuard_audition-output", "SourceGuard_render-controllers")
+          $regex = "^(" + (($targets + $guards) -join "|") + ")$"
+          "LIGHT_TEST_REGEX=$regex" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build the light test set
+        if: ${{ inputs.check_mode == 'light' }}
+        run: cmake --build build --config Release --parallel --target ${{ env.LIGHT_TEST_TARGETS }}
+
+      # --no-tests=error keeps a mistyped selection from passing vacuously.
+      - name: Run the light test set
+        if: ${{ inputs.check_mode == 'light' }}
+        run: ctest --test-dir build -C Release --output-on-failure --no-tests=error -R '${{ env.LIGHT_TEST_REGEX }}'
+
       # The default target includes every test executable (they all link
       # pitchnet_core, which the VST3 build does not use), so this builds
       # the whole suite, ModelInferenceTests included. That test loads
@@ -95,9 +167,11 @@ jobs:
       # FCPE reports the tone's pitch, and PSOLA shifts it by a minor
       # third. See tests/ModelInferenceTests.cpp.
       - name: Build the unit tests
+        if: ${{ inputs.check_mode != 'light' }}
         run: cmake --build build --config Release --parallel
 
       - name: Run the unit tests
+        if: ${{ inputs.check_mode != 'light' }}
         run: ctest --test-dir build -C Release --output-on-failure
 
       # Creates the plug-in in a minimal host on the runner's runtime and on an
