@@ -524,6 +524,16 @@ selectConnectedEditedNotes(const Project &project, bool hasDirtyNoteAnchors,
   selection.members.assign(notes.size(), uint8_t{0});
 
   const bool hasF0DirtyRange = f0DirtyStart >= 0 && f0DirtyEnd >= 0;
+  // Batch 5.2: a project-wide edit (Project::hasProjectWideEdit: pitch
+  // offset, formant shift, global pitch %) reaches every note, so a
+  // dirty neutral note under one is an edited note, not a reset
+  // candidate. This used to test the formant shift alone, which left
+  // the pitch % and the pitch offset invisible here: after a full
+  // Undo every note is dirty and neutral, no cluster was seeded, and
+  // the commit stage restored the original over the correctly
+  // shifted render, so the % appeared dead. The formant shift is
+  // part of hasProjectWideEdit, so its behaviour is unchanged.
+  const bool projectWideEdit = project.hasProjectWideEdit();
   auto isF0Anchor = [&](const Note &note) {
     return !hasDirtyNoteAnchors && hasF0DirtyRange &&
            note.getStartFrame() < f0DirtyEnd &&
@@ -534,7 +544,7 @@ selectConnectedEditedNotes(const Project &project, bool hasDirtyNoteAnchors,
       return false;
     if (isF0Anchor(note))
       return true;
-    return note.isDirty() && (std::abs(project.getFormantShift()) > 0.001f ||
+    return note.isDirty() && (projectWideEdit ||
                               !note.isNeutralForOriginalWaveform());
   };
   auto isEditedClusterCandidate = [&](const Note &note) {
@@ -543,12 +553,12 @@ selectConnectedEditedNotes(const Project &project, bool hasDirtyNoteAnchors,
 
     // A dirty neutral note is being reset. It must split the edited cluster
     // instead of pulling its neighbours into the new pass.
-    if (std::abs(project.getFormantShift()) <= 0.001f &&
+    if (!projectWideEdit &&
         note.isDirty() && note.isNeutralForOriginalWaveform() &&
         !isF0Anchor(note))
       return false;
 
-    return std::abs(project.getFormantShift()) > 0.001f ||
+    return projectWideEdit ||
            isF0Anchor(note) || note.hasRenderedEdit() ||
            !note.isNeutralForOriginalWaveform();
   };
@@ -1416,7 +1426,14 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   }
   const auto formantF0 = adjustedF0Range;
   const int formantSampleRate = audioData.sampleRate;
-  const bool hasGlobalFormant = std::abs(project->getFormantShift()) > 0.001f;
+  // Batch 5.2: the neutral-reset machinery in the commit stage keys
+  // off whether ANY project-wide edit is live, not just a global
+  // formant shift. Under a global pitch % or pitch offset, a neutral
+  // note's correct output is the shifted render rather than the
+  // original, so resetting it would erase the edit;
+  // Project::hasProjectWideEdit() includes the formant shift, so the
+  // formant behaviour is unchanged.
+  const bool hasProjectWideEdit = project->hasProjectWideEdit();
 
   // Mel is the NSF vocoder's input and is not cheap to copy, so the PSOLA
   // path skips building it entirely. The BigVGAN path skips it too: its mel
@@ -1542,7 +1559,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   auto onRendered =
       [this, capturedCancelFlag, capturedProject, capturedStartFrame,
        capturedEndFrame, hopSize, currentJobId, onComplete,
-       formantShifts, formantF0, formantSampleRate, hasGlobalFormant,
+       formantShifts, formantF0, formantSampleRate, hasProjectWideEdit,
        hasDirtyNoteAnchors, f0DirtyStart, f0DirtyEnd,
        capturedNoteCount, commitFrameRanges = std::move(commitFrameRanges),
        blendMask = std::move(blendMask),
@@ -1569,7 +1586,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                      currentJobId, onComplete, hasDirtyNoteAnchors,
                      f0DirtyStart, f0DirtyEnd, capturedNoteCount,
                      commitFrameRanges, blendMask, originalSegment,
-                     audioMovePatches, formantShifts, formantF0, formantSampleRate, hasGlobalFormant,
+                     audioMovePatches, formantShifts, formantF0, formantSampleRate, hasProjectWideEdit,
                      synthesizedAudio = std::move(synthesizedAudio)]() mutable {
           if (currentJobId != jobId.load())
             return;
@@ -1721,7 +1738,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
             int endSample;
           };
           std::vector<ResetSpan> resetSpans;
-          if (!hasGlobalFormant) {
+          if (!hasProjectWideEdit) {
             // Notes are not guaranteed to be in frame order, so collect and
             // sort before looking for contiguity.
             std::vector<std::pair<int, int>> neutralFrameRanges;
@@ -1933,7 +1950,8 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
           // crossfade; there the body is still copied up to where it starts.
           //
           // Timing patches protect only their own samples (including fades).
-          // A global formant shift still means no note is neutral.
+          // A project-wide edit still means no note's output is the
+          // neutral original, so this restore stays off while one is live.
           {
             // Covers the widest splice any version has written past a note
             // edge: commit fade (512 before, 384 now) + 128 search, and the
@@ -1949,7 +1967,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
 
             const auto &original = audioData.originalWaveform;
             const int originalSamples = original.getNumSamples();
-            if (!hasGlobalFormant && !resetSpans.empty() && originalSamples > 0 &&
+            if (!hasProjectWideEdit && !resetSpans.empty() && originalSamples > 0 &&
                 original.getNumChannels() > 0) {
               std::vector<OriginalWaveformRestore::Range> timingProtectedRanges;
               for (const auto &patch : audioMovePatches) {
@@ -2223,7 +2241,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
               continue;
 
             const bool isNeutralReset =
-                !hasGlobalFormant && note.isDirty() && note.isNeutralForOriginalWaveform() &&
+                !hasProjectWideEdit && note.isDirty() && note.isNeutralForOriginalWaveform() &&
                 !isF0Anchor;
             note.setRenderedEdit(!isNeutralReset);
             note.setSynthDirty(false);
