@@ -210,8 +210,12 @@ public:
   void logViewStateDiagnostics(const juce::String &tag) const;
   // End of the scrollable timeline, in the canvas's (project) time.
   double getTimelineDuration() const;
-  // Start of the scrollable timeline: 0 in Clip mode; the host's time zero,
-  // expressed in project time, in Track mode (may be negative).
+  // Start of the scrollable timeline: the host's time zero, expressed
+  // in project time (may be negative when the region sits later in
+  // the song than its offset in the take). Batch 5.2: Clip mode uses
+  // the same expression, so the ruler and the scroll range extend
+  // left of the clip head by the region's host lead-in; with no
+  // display offset (non-ARA) it is 0, as before.
   double getTimelineStart() const;
   double getTimelineLength() const;
   // Batch 4 fix (0.4.2): the length horizontal fits measure against.
@@ -223,6 +227,12 @@ public:
   // the region. Track mode keeps the scroll ruler above. The scroll
   // range itself (getTimelineLength()) is unchanged either way.
   double getFitTimelineLength() const;
+  // Batch 5.2: where a horizontal fit lands and what it measures
+  // from - the content start, which is project time zero. In Track
+  // mode that is the timeline start itself; in Clip mode the scroll
+  // ruler now reaches left of the content (the host lead-in), and a
+  // fit must not measure or land on that lead-in.
+  double getFitTimelineStart() const;
   // Host-timeline seconds at the left edge of the view.
   double getHostScrollSeconds() const;
 

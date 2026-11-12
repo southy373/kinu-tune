@@ -646,6 +646,102 @@ int main()
     CHECK(roll2.getPixelsPerSemitone() == DEFAULT_PIXELS_PER_SEMITONE);
   }
 
+  // --- M (batch 5.2): Clip mode's timeline extends left by the
+  // region's host lead-in. The project, the analysis window and the
+  // archive format are untouched; only the ruler and the scroll
+  // range move. With a display offset of 3630 s (a region an hour
+  // into the song) the timeline starts at -3630 s in project time,
+  // negative scroll clamps against that start with both stores in
+  // agreement, a fit still measures the ~2.3 s content and lands on
+  // the content start (project time zero) - never on the lead-in -
+  // and an offset change that removes the lead-in re-clamps a stale
+  // parked scroll instead of leaving it stranded an hour away.
+  {
+    PianoRollComponent roll;
+    fitRoll(roll, project);
+
+    const double fitLengthBefore = roll.getFitTimelineLength();
+    roll.setTimelineDisplayOffset(3630.0);
+    drainMessages();
+    CHECK(roll.getTimelineStart() == -3630.0);
+    CHECK(roll.getFitTimelineStart() == 0.0);
+    // The fit ruler does not grow with the lead-in.
+    CHECK(roll.getFitTimelineLength() == fitLengthBefore);
+    CHECK(roll.getFitTimelineLength() < 10.0);
+
+    // Negative scroll reaches the new start and clamps there, the
+    // viewState and CoordinateMapper stores agreeing (the mapper's
+    // view start tracks the timeline start in Clip mode too, via
+    // the batch 5.2 sync in setTimelineDisplayOffset).
+    roll.setScrollX(-1.0e9);
+    drainMessages();
+    CHECK(std::abs(roll.getScrollX() - roll.getTimelineStart() *
+                                           roll.getPixelsPerSecond()) <
+          0.01);
+    CHECK(storesAgree(roll));
+
+    // The recovery fit lands on the content start and shows every
+    // note, exactly as it does without the lead-in.
+    PianoRollComponentTestAccess::fitViewToContent(roll);
+    drainMessages();
+    CHECK(std::abs(roll.getScrollX()) < 0.01);
+    CHECK(visibleNotes(roll) == 3);
+    CHECK(storesAgree(roll));
+
+    // Park at the far left again, then remove the lead-in: the
+    // offset change re-clamps the now out-of-range scroll back to
+    // the content start.
+    roll.setScrollX(-1.0e9);
+    drainMessages();
+    CHECK(roll.getScrollX() < -1000.0);
+    roll.setTimelineDisplayOffset(0.0);
+    drainMessages();
+    CHECK(roll.getTimelineStart() == 0.0);
+    CHECK(std::abs(roll.getScrollX()) < 0.01);
+    CHECK(storesAgree(roll));
+    CHECK(visibleNotes(roll) == 3);
+  }
+
+  // --- M2 (batch 5.2): the same fit guarantee through
+  // MainComponent::zoomToFull with a lead-in present: the fit
+  // measures the content and lands on the content start, so all
+  // notes stay visible.
+  {
+    EditorController controllerE(false);
+    {
+      auto &bound = *controllerE.getProject();
+      auto &audio = bound.getAudioData();
+      audio.sampleRate = SAMPLE_RATE;
+      audio.f0.assign(200, 220.0f);
+      audio.basePitch.assign(200, 57.0f);
+      audio.deltaPitch.assign(200, 0.0f);
+      audio.waveform.setSize(1, 200 * HOP_SIZE);
+      bound.addNote(Note(10, 60, 58));
+      bound.addNote(Note(70, 120, 62));
+      bound.addNote(Note(130, 190, 67));
+    }
+    PitchUndoManager historyE(100);
+    MainComponent mcE(false);
+    MainComponentTestAccess::wireController(mcE, controllerE, historyE);
+    auto &rollE = MainComponentTestAccess::roll(mcE);
+    mcE.setSize(1100, 650);
+    drainMessages();
+    if (rollE.getWidth() <= 0 || rollE.getHeight() <= 0)
+      rollE.setSize(1000, 560); // headless layout may not size the roll
+    drainMessages();
+
+    rollE.setTimelineDisplayOffset(3630.0);
+    drainMessages();
+    CHECK(rollE.getTimelineStart() == -3630.0);
+    rollE.onZoomFullRequested(); // == MainComponent::zoomToFull()
+    drainMessages();
+    CHECK(std::abs(rollE.getScrollX()) < 0.01);
+    CHECK(rollE.getPixelsPerSecond() > 100.0f);
+    CHECK(visibleNotes(rollE) == 3);
+    CHECK(storesAgree(rollE));
+    rollE.setProject(nullptr);
+  }
+
   std::cout << "ViewStateRecoveryTests passed" << std::endl;
   return 0;
 }

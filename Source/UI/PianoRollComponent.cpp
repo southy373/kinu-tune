@@ -3846,10 +3846,18 @@ void PianoRollComponent::setTimelineDisplayOffset(double seconds)
     // timeline sits on it. Move the scroll with it so the track itself stays
     // still on screen.
     scrollX -= (seconds - previous) * pixelsPerSecond;
-    coordMapper->setViewStartSeconds(getTimelineStart());
     coordMapper->setScrollX(scrollX);
-    updateScrollBars();
   }
+
+  // Batch 5.2: the mapper's view start is the scroll lower bound in
+  // mapper space and must track the timeline start in Clip mode too,
+  // now that the Clip-mode start moves with the display offset (it
+  // used to sit inside the Track-mode branch only, when the Clip
+  // start was a constant 0 and the bound could not drift). The
+  // updateScrollBars() re-clamp keeps a scroll position the new
+  // range no longer allows from going stale between the two stores.
+  coordMapper->setViewStartSeconds(getTimelineStart());
+  updateScrollBars();
 
   // Region previews and the Track-mode clip are placed through the offset.
   waveformBackgroundRenderer->setProjectDrawRange(getTrackModeActiveSpan());
@@ -5040,7 +5048,7 @@ void PianoRollComponent::recoverFromCorruptViewState(const char *reason)
   {
     pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND;
     pixelsPerSemitone = DEFAULT_PIXELS_PER_SEMITONE;
-    scrollX = getTimelineStart() * static_cast<double>(pixelsPerSecond);
+    scrollX = getFitTimelineStart() * static_cast<double>(pixelsPerSecond);
     scrollY = 0.0;
     syncViewStateToCoordMapper();
     return;
@@ -5083,7 +5091,7 @@ void PianoRollComponent::fitViewToContent()
   // re-entrant call would attempt its own recovery and recurse.
   pixelsPerSecond = DEFAULT_PIXELS_PER_SECOND;
   pixelsPerSemitone = DEFAULT_PIXELS_PER_SEMITONE;
-  scrollX = getTimelineStart() * static_cast<double>(pixelsPerSecond);
+  scrollX = getFitTimelineStart() * static_cast<double>(pixelsPerSecond);
   scrollY = 0.0;
   syncViewStateToCoordMapper();
 
@@ -5100,7 +5108,7 @@ void PianoRollComponent::fitViewToContent()
     fittedPps = juce::jlimit(MIN_PIXELS_PER_SECOND, MAX_PIXELS_PER_SECOND,
                              static_cast<float>(visibleWidth / totalTime));
   pixelsPerSecond = fittedPps;
-  scrollX = getTimelineStart() * static_cast<double>(fittedPps);
+  scrollX = getFitTimelineStart() * static_cast<double>(fittedPps);
 
   // Vertical: fit the project's pitch range when there are notes to
   // fit, otherwise reset to the default zoom at the top.
@@ -5231,11 +5239,18 @@ void PianoRollComponent::updateScrollBars()
 
 double PianoRollComponent::getTimelineStart() const
 {
-  // Clip mode: the canvas starts at the modification's own time zero.
-  // Track mode: it starts at the host's time zero, which in the active
-  // modification's time can be negative (a region placed later in the song
-  // than its offset in the take) or positive.
-  return trackViewMode ? timelineToProject(0.0) : 0.0;
+  // The canvas starts at the host's time zero, which in the active
+  // modification's time can be negative (a region placed later in the
+  // song than its offset in the take) or positive. Batch 5.2: Clip
+  // mode uses the same expression Track mode always used, so the
+  // ruler and the scroll range extend left of the clip head by the
+  // region's host lead-in (the display offset in seconds) - the clip
+  // no longer has to be edited glued to the left edge. Project time
+  // itself is unchanged: project zero stays the content start, fits
+  // keep anchoring there (getFitTimelineStart), the analysis window
+  // and the archive format are untouched, and with no display offset
+  // (non-ARA) the start stays 0.
+  return timelineToProject(0.0);
 }
 
 double PianoRollComponent::getTimelineDuration() const
@@ -5295,7 +5310,18 @@ double PianoRollComponent::getFitTimelineLength() const
   if (project != nullptr &&
       !project->getAudioData().playbackRegionRanges.empty())
     contentDuration += getTimelineBarSeconds();
-  return std::max(0.0, contentDuration - getTimelineStart());
+  // Batch 5.2: measured from the content start, not the scroll
+  // ruler's start - the Clip-mode ruler now reaches left into the
+  // host lead-in, which is not content and must not widen the fit.
+  return std::max(0.0, contentDuration - getFitTimelineStart());
+}
+
+double PianoRollComponent::getFitTimelineStart() const
+{
+  // Track mode's canvas is the song, so its content starts at the
+  // timeline start. Clip mode's content is the project, which starts
+  // at project time zero however far left the scroll ruler reaches.
+  return trackViewMode ? getTimelineStart() : 0.0;
 }
 
 double PianoRollComponent::clampScrollX(double x) const

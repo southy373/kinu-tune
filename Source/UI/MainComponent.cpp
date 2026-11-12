@@ -1811,7 +1811,11 @@ void MainComponent::zoomToFull()
         static_cast<float>(visibleWidth / fitLength), false);
   else
     pianoRoll.setPixelsPerSecond(0.0f, false);
-  pianoRoll.setScrollX(pianoRoll.getTimelineStart() * pianoRoll.getPixelsPerSecond());
+  // Batch 5.2: land on the content start (project time zero), not
+  // the scroll ruler's left edge - in Clip mode the ruler now
+  // reaches left into the host lead-in, and landing there would
+  // park the content off-screen to the right.
+  pianoRoll.setScrollX(pianoRoll.getFitTimelineStart() * pianoRoll.getPixelsPerSecond());
   onZoomChanged(pianoRoll.getPixelsPerSecond());
   if (pianoRoll.onScrollChanged)
     pianoRoll.onScrollChanged(pianoRoll.getScrollX());
