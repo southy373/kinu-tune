@@ -80,7 +80,9 @@ jobs:
 
   windows-build:
     runs-on: windows-latest
-    timeout-minutes: 120
+    # Batch 6: raised from 120 - the full gate's Windows build took
+    # 118 minutes on the 0.5.2 run and brushed the old limit.
+    timeout-minutes: 180
     steps:
       - name: Checkout the source with submodules
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
