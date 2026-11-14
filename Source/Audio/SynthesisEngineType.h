@@ -10,7 +10,8 @@
 enum class SynthesisEngineType
 {
     Vocoder = 0,   // PC-NSF-HiFiGAN neural vocoder (mel + F0 -> waveform)
-    Psola          // Classic - time-domain PSOLA (pitch-synchronous overlap-add)
+    Psola,         // Classic - time-domain PSOLA (pitch-synchronous overlap-add)
+    SiFiGAN        // SiFi-GAN neural vocoder (source features + edited F0 -> waveform), the Plan B route
 };
 
 /**
@@ -92,6 +93,7 @@ inline const char* synthesisEngineTypeToString(SynthesisEngineType type)
     {
         case SynthesisEngineType::Psola:   return "PSOLA";
         case SynthesisEngineType::Vocoder: return "Vocoder";
+        case SynthesisEngineType::SiFiGAN: return "SiFiGAN";
         default:                           return "Vocoder";
     }
 }
@@ -105,5 +107,7 @@ inline SynthesisEngineType stringToSynthesisEngineType(const juce::String& str)
         return SynthesisEngineType::Psola;
     if (str == "Vocoder")
         return SynthesisEngineType::Vocoder;
+    if (str == "SiFiGAN")
+        return SynthesisEngineType::SiFiGAN;
     return defaultSynthesisEngineType();
 }

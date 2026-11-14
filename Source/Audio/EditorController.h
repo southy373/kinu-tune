@@ -7,6 +7,7 @@
 #include "PitchDetectorType.h"
 #include "RMVPEPitchDetector.h"
 #include "BigVGANVocoder.h"
+#include "SiFiGANVocoder.h"
 #include "GAMEDetector.h"
 #include "Synthesis/IncrementalSynthesizer.h"
 #include "Synthesis/PitchShiftEngine.h"
@@ -37,6 +38,7 @@ public:
   AudioEngine *getAudioEngine() const { return audioEngine.get(); }
   Vocoder *getVocoder() const { return vocoder.get(); }
   BigVGANVocoder *getBigVganVocoder() const { return bigVganVocoder.get(); }
+  SiFiGANVocoder *getSiFiGanVocoder() const { return siFiVocoder.get(); }
   IncrementalSynthesizer *getIncrementalSynth() const
   {
     return incrementalSynth.get();
@@ -136,6 +138,11 @@ private:
   // the models folder. Returns true only when the model is loaded; AI
   // Resynthesis falls back to the NSF vocoder when it returns false.
   bool ensureBigVganLoaded();
+  // Loads the SiFi-GAN model and its stats sidecar into siFiVocoder
+  // when both files are present in the models folder. Returns true
+  // only when the model is loaded; a SiFi-GAN selection falls back to
+  // the BigVGAN / NSF routes when it returns false.
+  bool ensureSiFiGanLoaded();
   std::unique_ptr<Project> project;
   std::unique_ptr<AudioEngine> audioEngine;
   std::unique_ptr<FCPEPitchDetector> fcpePitchDetector;
@@ -143,6 +150,7 @@ private:
   std::unique_ptr<GAMEDetector> gameDetector;
   std::unique_ptr<Vocoder> vocoder;
   std::unique_ptr<BigVGANVocoder> bigVganVocoder;
+  std::unique_ptr<SiFiGANVocoder> siFiVocoder;
   std::unique_ptr<IncrementalSynthesizer> incrementalSynth;
   std::unique_ptr<PlaybackController> playbackController;
 

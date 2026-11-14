@@ -3,6 +3,7 @@
 #include "../../JuceHeader.h"
 #include "../../Models/Project.h"
 #include "../BigVGANVocoder.h"
+#include "../SiFiGANVocoder.h"
 #include "../SynthesisEngineType.h"
 #include "../Vocoder.h"
 #include "PitchShiftEngine.h"
@@ -30,8 +31,11 @@
  * since batch 4 - see PitchShiftEngine) first renders the edited pitch into
  * a scratch waveform and BigVGANVocoder regenerates that waveform from its
  * own mel, because BigVGAN has no F0 input to steer. The classic path uses
- * the same pitch-shift engine directly. Everything after the render -
- * blending, splicing, the audio move patches - is identical for all three.
+ * the same pitch-shift engine directly. SiFi-GAN is the Plan B route to
+ * the same span: it takes the edited F0 as data and generates from the
+ * original audio's features, with no scratch waveform at all. Everything
+ * after the render - blending, splicing, the audio move patches - is
+ * identical for all of them.
  */
 class IncrementalSynthesizer {
 public:
@@ -43,6 +47,7 @@ public:
 
   void setVocoder(Vocoder *v) { vocoder = v; }
   void setBigVganVocoder(BigVGANVocoder *v) { bigVganVocoder = v; }
+  void setSiFiGanVocoder(SiFiGANVocoder *v) { siFiVocoder = v; }
   void setProject(Project *p) { project = p; }
   void setSynthesisEngine(SynthesisEngineType type) { synthesisEngine = type; }
   SynthesisEngineType getSynthesisEngine() const { return synthesisEngine; }
@@ -64,7 +69,7 @@ public:
   bool isSynthesizing() const { return isBusy.load(); }
 
   // Why the most recent engine render failed, when the engine reported
-  // one (currently the BigVGAN path). Empty when it did not.
+  // one (currently the BigVGAN and SiFi-GAN paths). Empty when it did not.
   std::string getLastSynthesisError() const;
 
 private:
@@ -103,6 +108,7 @@ private:
 
   Vocoder *vocoder = nullptr;
   BigVGANVocoder *bigVganVocoder = nullptr;
+  SiFiGANVocoder *siFiVocoder = nullptr;
   Project *project = nullptr;
   SynthesisEngineType synthesisEngine = SynthesisEngineType::Vocoder;
   PitchShiftEngine pitchShiftEngine = PitchShiftEngine::Psola;

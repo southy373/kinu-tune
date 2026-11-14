@@ -149,7 +149,8 @@ synthesisEngineTypeForSavedPreference(SynthesisEngineType type)
   // Keep a saved AI choice only while the BigVGAN model is actually there;
   // otherwise the choice could never render and moves to Classic, matching
   // how ParameterPanel treats an AI choice this machine cannot run.
-  if (type == SynthesisEngineType::Vocoder &&
+  if ((type == SynthesisEngineType::Vocoder ||
+       type == SynthesisEngineType::SiFiGAN) &&
       getAiResynthesisSupport() == AiResynthesisSupport::Unavailable)
     return SynthesisEngineType::Psola;
   return type;

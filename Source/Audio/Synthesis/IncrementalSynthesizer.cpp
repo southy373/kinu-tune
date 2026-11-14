@@ -974,26 +974,37 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   const bool useBigVgan =
       !usePsola && bigVganVocoder != nullptr && bigVganVocoder->isLoaded();
 
-  if (!project || (!usePsola && !useBigVgan && !vocoder)) {
+  // Plan B: SiFi-GAN runs only when its own engine is selected AND its
+  // model is loaded. A SiFi-GAN selection without the model falls
+  // through to the BigVGAN / NSF logic below, exactly as a BigVGAN
+  // selection without its model falls through to the NSF vocoder; the
+  // render log line below names the engine that actually ran.
+  const bool useSiFi = synthesisEngine == SynthesisEngineType::SiFiGAN &&
+                       siFiVocoder != nullptr && siFiVocoder->isLoaded();
+
+  if (!project || (!usePsola && !useBigVgan && !useSiFi && !vocoder)) {
     if (onComplete)
       onComplete(false);
     return;
   }
 
   auto &audioData = project->getAudioData();
-  if (audioData.melSpectrogram.empty() || audioData.f0.empty()) {
+  // SiFi-GAN builds its own features from the waveform and the F0, so
+  // it does not need the analysis mel the other engines read.
+  if ((audioData.melSpectrogram.empty() && !useSiFi) ||
+      audioData.f0.empty()) {
     if (onComplete)
       onComplete(false);
     return;
   }
 
-  if (!usePsola && !useBigVgan && !vocoder->isLoaded()) {
+  if (!usePsola && !useBigVgan && !useSiFi && !vocoder->isLoaded()) {
     if (onComplete)
       onComplete(false);
     return;
   }
 
-  if ((usePsola || useBigVgan) &&
+  if ((usePsola || useBigVgan || useSiFi) &&
       audioData.originalWaveform.getNumSamples() == 0 &&
       audioData.waveform.getNumSamples() == 0) {
     if (onComplete)
@@ -1085,7 +1096,10 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
       commitText = "(none)";
 
     LOG(juce::String("synthesizeRegion: engine=") +
-        (usePsola ? "PSOLA" : useBigVgan ? "BigVGAN" : "Vocoder") +
+        (usePsola ? "PSOLA"
+                  : useBigVgan ? "BigVGAN"
+                  : useSiFi ? "SiFi-GAN"
+                            : "Vocoder") +
         "  pitchShift=" + pitchShiftEngineToString(pitchShiftEngine) +
         "  noteAnchors=" + (hasDirtyNoteAnchors ? "yes" : "NO") +
         "  dirtyNotes=" + juce::String(dirtyNoteCount) +
@@ -1439,7 +1453,7 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // path skips building it entirely. The BigVGAN path skips it too: its mel
   // is computed from the scratch PSOLA render, not from this analysis mel.
   std::vector<std::vector<float>> melRange;
-  if (!usePsola && !useBigVgan) {
+  if (!usePsola && !useBigVgan && !useSiFi) {
     // Frames past the analysis mel (a stretched tail) start from the
     // last analysis frame; the timing pass and the gap bridging below
     // overwrite everything a note covers or connects.
@@ -2303,6 +2317,62 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
                 onRendered(std::move(result));
               },
               capturedCancelFlag);
+        },
+        capturedCancelFlag);
+  } else if (useSiFi) {
+    // Plan B: the edited pitch reaches SiFi-GAN as data, not audio.
+    // The vocoder rebuilds the source features from the original
+    // waveform and the analysed F0 and generates from the edited F0
+    // directly - no scratch pitch-shift render. The source span handed
+    // over carries a few frames of context on each side so a retimed
+    // note reading just outside the render range still finds its
+    // features; the frame map is made relative to that span's first
+    // frame, the grid RenderRequest is defined on.
+    SiFiGANVocoder::RenderRequest request;
+    request.sourceSampleRate = audioData.sampleRate;
+    request.analysisHop = hopSize;
+    request.numOutputFrames = endFrame - startFrame;
+
+    const int padFrames = 4;
+    const int totalSourceFrames =
+        hopSize > 0 ? origWaveform.getNumSamples() / hopSize : 0;
+    const int waveStartFrame = std::max(0, startFrame - padFrames);
+    const int waveEndFrame =
+        std::min(totalSourceFrames, endFrame + padFrames);
+    const int sourceStartSample = waveStartFrame * hopSize;
+    const int sourceEndSample = waveEndFrame * hopSize;
+    if (origWaveform.getNumChannels() > 0 &&
+        sourceEndSample > sourceStartSample) {
+      const float *sourcePtr = origWaveform.getReadPointer(0);
+      request.sourceWaveform.assign(sourcePtr + sourceStartSample,
+                                    sourcePtr + sourceEndSample);
+    }
+
+    const auto &analysisF0 =
+        audioData.denseF0.empty() ? audioData.f0 : audioData.denseF0;
+    const int f0End = std::min(waveEndFrame,
+                               static_cast<int>(analysisF0.size()));
+    if (waveStartFrame < f0End)
+      request.sourceF0.assign(analysisF0.begin() + waveStartFrame,
+                              analysisF0.begin() + f0End);
+    request.targetF0 = adjustedF0Range;
+
+    auto frameMap = buildSourceFrameMap(startFrame, endFrame);
+    for (auto &frame : frameMap)
+      frame -= waveStartFrame;
+    request.sourceFrameMap = std::move(frameMap);
+
+    auto *siFi = siFiVocoder;
+    auto *synth = this;
+    siFi->inferFromWaveformAsync(
+        std::move(request),
+        [siFi, synth, onRendered = std::move(onRendered)](
+            std::vector<float> result) mutable {
+          // An empty SiFi-GAN result fails the whole render; keep the
+          // vocoder's reason so the UI can show it.
+          if (result.empty())
+            synth->setLastSynthesisError(siFi->getLastError());
+          onRendered(std::move(result));
         },
         capturedCancelFlag);
   } else {

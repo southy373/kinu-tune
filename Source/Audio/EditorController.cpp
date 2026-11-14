@@ -36,6 +36,7 @@ EditorController::EditorController(bool enableAudioDevice)
   gameDetector = std::make_unique<GAMEDetector>();
   vocoder = std::make_unique<Vocoder>();
   bigVganVocoder = std::make_unique<BigVGANVocoder>();
+  siFiVocoder = std::make_unique<SiFiGANVocoder>();
   incrementalSynth = std::make_unique<IncrementalSynthesizer>();
   playbackController = std::make_unique<PlaybackController>();
 
@@ -47,6 +48,7 @@ EditorController::EditorController(bool enableAudioDevice)
 
   incrementalSynth->setVocoder(vocoder.get());
   incrementalSynth->setBigVganVocoder(bigVganVocoder.get());
+  incrementalSynth->setSiFiGanVocoder(siFiVocoder.get());
   incrementalSynth->setSynthesisEngine(getSynthesisEngineType());
   incrementalSynth->setPitchShiftEngine(getPitchShiftEngine());
   if (audioEngine)
@@ -113,6 +115,9 @@ void EditorController::requestShutdown()
 
   if (bigVganVocoder)
     bigVganVocoder->requestShutdown();
+
+  if (siFiVocoder)
+    siFiVocoder->requestShutdown();
 }
 
 EditorController::~EditorController()
@@ -604,6 +609,20 @@ bool EditorController::ensureBigVganLoaded()
       modelPath, PlatformPaths::getBigVganNoctModelFile());
 }
 
+bool EditorController::ensureSiFiGanLoaded()
+{
+  if (!siFiVocoder)
+    return false;
+  if (siFiVocoder->isLoaded())
+    return true;
+
+  auto modelPath = PlatformPaths::getSiFiGanModelFile();
+  auto statsPath = PlatformPaths::getSiFiGanStatsFile();
+  if (!modelPath.existsAsFile() || !statsPath.existsAsFile())
+    return false;
+  return siFiVocoder->loadModel(modelPath, statsPath);
+}
+
 void EditorController::resynthesizeIncrementalAsync(
     Project &project,
     const std::function<void(const juce::String &)> &onProgress,
@@ -644,11 +663,23 @@ void EditorController::resynthesizeIncrementalAsync(
   }
 
   auto &audioData = project.getAudioData();
-  if (audioData.melSpectrogram.empty() || audioData.f0.empty())
+  // SiFi-GAN builds its own features and does not read the analysis
+  // mel, so only the F0 is a hard requirement for it.
+  if ((audioData.melSpectrogram.empty() &&
+       getSynthesisEngineType() != SynthesisEngineType::SiFiGAN) ||
+      audioData.f0.empty())
   {
     if (onComplete)
       onComplete(false);
     return;
+  }
+  if (getSynthesisEngineType() == SynthesisEngineType::SiFiGAN &&
+      !ensureSiFiGanLoaded())
+  {
+    // Not fatal: the synthesizer falls back to the BigVGAN / NSF
+    // routes when the SiFi-GAN model cannot be loaded.
+    LOG("resynthesize: SiFi-GAN selected but its model is not loaded; "
+        "the render falls back to the other AI routes");
   }
   if (getSynthesisEngineType() == SynthesisEngineType::Vocoder &&
       !vocoder->isLoaded() && !ensureBigVganLoaded())
@@ -683,6 +714,7 @@ void EditorController::resynthesizeIncrementalAsync(
   synth->setProject(&project);
   synth->setVocoder(vocoder.get());
   synth->setBigVganVocoder(bigVganVocoder.get());
+  synth->setSiFiGanVocoder(siFiVocoder.get());
   synth->setSynthesisEngine(getSynthesisEngineType());
   pendingRerun.store(false);
 
@@ -1114,6 +1146,17 @@ void EditorController::analyzeAudio(
         }
       }
     }
+  }
+
+  // SiFi-GAN is an optional route like BigVGAN, but unlike the Vocoder
+  // engine above a missing model never aborts the analysis: the render
+  // falls back to the other routes, so a failed load is only logged.
+  if (getSynthesisEngineType() == SynthesisEngineType::SiFiGAN &&
+      PlatformPaths::getSiFiGanModelFile().existsAsFile() &&
+      !ensureSiFiGanLoaded())
+  {
+    LOG("analyzeAudio: SiFi-GAN model present but could not be loaded; "
+        "renders will fall back to the other AI routes");
   }
 
   if (shuttingDown.load())

@@ -175,6 +175,9 @@ private:
     // names track the enum, the button text is what the user reads.
     RadioButton vocoderEngineToggle;
     RadioButton psolaEngineToggle;
+    // Batch 6: the SiFi-GAN (Plan B) engine, on its own row under the
+    // pair above - the member name tracks the enum, like the others.
+    RadioButton siFiEngineToggle;
 
     // Batch 4: the pitch-shift stage's algorithm, under its own
     // caption below the engine radios. The button texts are the

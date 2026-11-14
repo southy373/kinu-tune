@@ -236,6 +236,21 @@ namespace PlatformPaths
         return getModelFile("bigvgan_v2_44khz_128band_noct.onnx");
     }
 
+    // SiFi-GAN (the project's own training output) is the Plan B AI
+    // resynthesis model: it is placed next to the other models by hand
+    // or by packaging, so callers must check existsAsFile(). The stats
+    // sidecar belongs to the same training run as the weights - the
+    // vocoder refuses a model without it.
+    inline juce::File getSiFiGanModelFile()
+    {
+        return getModelFile("sifigan_115k_gather.onnx");
+    }
+
+    inline juce::File getSiFiGanStatsFile()
+    {
+        return getModelFile("sifigan_kokoro_stats.json");
+    }
+
     inline juce::File getModelSubDir(const juce::String &dirName,
                                      const juce::String &verifyFile = "")
     {

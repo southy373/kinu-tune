@@ -13,6 +13,7 @@
 #include "../Source/Audio/FCPEPitchDetector.h"
 #include "../Source/Audio/GAMEDetector.h"
 #include "../Source/Audio/RMVPEPitchDetector.h"
+#include "../Source/Audio/SiFiGANVocoder.h"
 #include "../Source/Audio/SynthesisEngineType.h"
 #include "../Source/Audio/Vocoder.h"
 #include "../Source/Models/Project.h"
@@ -99,6 +100,15 @@ int main()
         CHECK(!Vocoder::isOnnxRuntimeAvailable());
         CHECK(!vocoder.loadModel(juce::File("/nonexistent/pc_nsf_hifigan.onnx")));
         CHECK(!vocoder.isLoaded());
+    }
+    {
+        SiFiGANVocoder siFi;
+        CHECK(!SiFiGANVocoder::isOnnxRuntimeAvailable());
+        CHECK(!siFi.loadModel(
+            juce::File("/nonexistent/sifigan_115k_gather.onnx"),
+            juce::File("/nonexistent/sifigan_kokoro_stats.json")));
+        CHECK(!siFi.isLoaded());
+        CHECK(siFi.getLastError() == reason.toStdString());
     }
 
     // Analysis stops before any model is touched.

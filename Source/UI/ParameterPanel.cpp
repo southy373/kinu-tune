@@ -39,6 +39,8 @@ constexpr int kPitchShiftLabelHeight = 18;
 
 constexpr int kSynthesisCardHeight =
     kInnerPadY + kSectionLabelHeight + kSectionLabelGap + kRadioRowHeight + kRowGap +
+    // Batch 6: the SiFi-GAN engine radio gets its own row under the pair.
+    kRadioRowHeight + kRowGap +
     kPitchShiftLabelHeight + kRowGap +
     (kRadioRowHeight + kRowGap) * 3 +
     kRenderStatusRowHeight + kInnerPadY;
@@ -283,6 +285,7 @@ ParameterPanel::ParameterPanel()
     for (auto* radio : { &chromaticToggle, &scaleToggle,
                          &beatsTimelineToggle, &timeTimelineToggle,
                          &vocoderEngineToggle, &psolaEngineToggle,
+                         &siFiEngineToggle,
                          &psolaShiftToggle, &rubberBandShiftToggle,
                          &signalsmithShiftToggle })
     {
@@ -553,6 +556,13 @@ void ParameterPanel::resized()
     vocoderEngineToggle.setBounds(vocoderArea);
     psolaEngineToggle.setBounds(engineRow);
 
+    // Batch 6: the SiFi-GAN radio on its own full-width row - three
+    // labels cannot share the row above without squeezing the two that
+    // were already there, and the pitch-shift group below sets the
+    // stacked-row precedent.
+    bounds.removeFromTop(kRowGap);
+    siFiEngineToggle.setBounds(bounds.removeFromTop(kRadioRowHeight));
+
     // Batch 4: the pitch-shift group, stacked full-width under its
     // caption so the three algorithm names never have to share a row.
     bounds.removeFromTop(kRowGap);
@@ -778,13 +788,16 @@ void ParameterPanel::buttonClicked(juce::Button* button)
         return;
     }
 
-    if (button == &vocoderEngineToggle || button == &psolaEngineToggle)
+    if (button == &vocoderEngineToggle || button == &psolaEngineToggle ||
+        button == &siFiEngineToggle)
     {
         auto picked = synthesisEngine;
         if (button == &vocoderEngineToggle && vocoderEngineToggle.getToggleState())
             picked = SynthesisEngineType::Vocoder;
         else if (button == &psolaEngineToggle && psolaEngineToggle.getToggleState())
             picked = SynthesisEngineType::Psola;
+        else if (button == &siFiEngineToggle && siFiEngineToggle.getToggleState())
+            picked = SynthesisEngineType::SiFiGAN;
 
         // Clicking the active one toggles it off; put it back rather than
         // leaving the group with nothing selected.
@@ -882,6 +895,7 @@ void ParameterPanel::refreshLocalisedText()
 
     vocoderEngineToggle.setButtonText(TR("param.engine_vocoder"));
     psolaEngineToggle.setButtonText(TR("param.engine_psola"));
+    siFiEngineToggle.setButtonText(TR("param.engine_sifigan"));
     refreshVocoderToggleAvailability();
     psolaEngineToggle.setTooltip(TR("tooltip.engine_psola"));
 
@@ -1103,7 +1117,9 @@ void ParameterPanel::setSynthesisEngineInternal(SynthesisEngineType type, bool n
     // would leave no way back. Whoever asked for the vocoder (saved settings,
     // the controller) still holds it, so report the move even when the request
     // itself was silent.
-    if (type == SynthesisEngineType::Vocoder && aiSupport == AiResynthesisSupport::Unavailable)
+    if ((type == SynthesisEngineType::Vocoder ||
+         type == SynthesisEngineType::SiFiGAN) &&
+        aiSupport == AiResynthesisSupport::Unavailable)
     {
         type = SynthesisEngineType::Psola;
         notify = true;
@@ -1122,6 +1138,8 @@ void ParameterPanel::refreshSynthesisToggles()
                                        juce::dontSendNotification);
     psolaEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::Psola,
                                      juce::dontSendNotification);
+    siFiEngineToggle.setToggleState(synthesisEngine == SynthesisEngineType::SiFiGAN,
+                                    juce::dontSendNotification);
     refreshRenderDeviceRow();
 }
 
@@ -1158,22 +1176,34 @@ void ParameterPanel::setAiResynthesisSupport(AiResynthesisSupport support)
     refreshVocoderToggleAvailability();
 
     if (aiSupport == AiResynthesisSupport::Unavailable &&
-        synthesisEngine == SynthesisEngineType::Vocoder)
+        (synthesisEngine == SynthesisEngineType::Vocoder ||
+         synthesisEngine == SynthesisEngineType::SiFiGAN))
         setSynthesisEngineInternal(SynthesisEngineType::Psola, true);
 }
 
 void ParameterPanel::refreshVocoderToggleAvailability()
 {
     vocoderEngineToggle.setEnabled(aiSupport != AiResynthesisSupport::Unavailable);
+    siFiEngineToggle.setEnabled(aiSupport != AiResynthesisSupport::Unavailable);
     // Tooltips still show on a disabled component, so the greyed-out option
     // explains itself on hover; a CPU-only one adds why renders are slow.
     if (aiSupport == AiResynthesisSupport::Unavailable)
+    {
         vocoderEngineToggle.setTooltip(TR("tooltip.engine_vocoder_unavailable"));
+        siFiEngineToggle.setTooltip(TR("tooltip.engine_sifigan_unavailable"));
+    }
     else if (aiSupport == AiResynthesisSupport::CpuOnly)
+    {
         vocoderEngineToggle.setTooltip(TR("tooltip.engine_vocoder") + "\n" +
                                        TR("tooltip.engine_vocoder_cpu_note"));
+        siFiEngineToggle.setTooltip(TR("tooltip.engine_sifigan") + "\n" +
+                                    TR("tooltip.engine_vocoder_cpu_note"));
+    }
     else
+    {
         vocoderEngineToggle.setTooltip(TR("tooltip.engine_vocoder"));
+        siFiEngineToggle.setTooltip(TR("tooltip.engine_sifigan"));
+    }
 }
 
 void ParameterPanel::setRenderStatus(RenderStatus status,
@@ -1190,7 +1220,9 @@ void ParameterPanel::refreshRenderStatusText()
 {
     const auto engineName = TR(renderStatusEngine == SynthesisEngineType::Psola
                                    ? "param.engine_psola"
-                                   : "param.engine_vocoder");
+                                   : renderStatusEngine == SynthesisEngineType::SiFiGAN
+                                         ? "param.engine_sifigan"
+                                         : "param.engine_vocoder");
     const char* key = "status.render_none";
     switch (renderStatus)
     {
