@@ -54,4 +54,5 @@ third_party/ASIOSDK/
 /third_party/*
 !/third_party/rubberband
 !/third_party/signalsmith-stretch
+!/third_party/world
 sign.sh

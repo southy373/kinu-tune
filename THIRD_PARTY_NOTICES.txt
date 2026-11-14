@@ -375,6 +375,28 @@ and Sarasa Gothic, each under the SIL Open Font License 1.1. License texts:
 Resources/fonts/Montserrat-OFL.txt, Resources/fonts/NotoSansCJK-OFL.txt,
 Resources/fonts/Sarasa-OFL.txt
 
+WORLD (speech analysis/synthesis system)
+Source: https://github.com/mmorise/World (commit
+c794856b537758a3d300757db2e5e31685a822c2)
+Copyright (c) 2010 M. Morise
+
+The WORLD vocoder analysis library: Harvest (F0), CheapTrick (spectral
+envelope) and D4C (aperiodicity) are used by the SiFi-GAN front-end to
+compute the same features the SiFi-GAN model was trained with.
+Distributed under a modified BSD licence (3-clause, no endorsement);
+the complete licence text: licenses/WORLD-LICENSE.txt, and the vendored
+copy under third_party/world/ (see its VENDORED.md).
+
+SiFi-GAN model (sifigan_115k_gather.onnx; in Resources/models)
+A neural vocoder generator trained by the FlexaTune project itself on
+rights-clean corpora (LibriTTS-R, CC BY 4.0, then Kokoro Speech
+Dataset, public domain) using the SiFi-GAN architecture
+(https://github.com/chomeyama/SiFi-GAN, MIT License, Copyright 2022
+Reo Yoneyama). The weights are the project's own training output; the
+ONNX conversion is the project's own work. The model file and
+its feature-statistics sidecar (sifigan_kokoro_stats.json) are placed
+in the models folder by the installer, like the BigVGAN model.
+
 Bundled fonts and machine-learning model files retain their respective
 upstream licenses and attribution requirements. Their licenses must be
 reviewed for each release before distributing new or changed assets.
