@@ -8,7 +8,7 @@ if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
         "macOS target architectures" FORCE)
 endif()
 
-project(PitchNet VERSION 0.5.2) # Kinu Tune version (based on PitchNet 0.7.2)
+project(PitchNet VERSION 0.6.0) # Kinu Tune version (based on PitchNet 0.7.2)
 
 # Fail fast on a 32-bit toolchain. Every ONNX Runtime package selected below is
 # x64/arm64 only, so a 32-bit build cannot link - it dies much later with a wall
@@ -506,6 +506,23 @@ else()
     target_compile_options(rubberband PRIVATE -w)
 endif()
 
+# WORLD (batch 6 SiFi-GAN front-end; vendored under third_party/world,
+# see its VENDORED.md). The feature library behind pyworld: Harvest,
+# CheapTrick, D4C and CodeAperiodicity extract the SiFi-GAN front-end's
+# source features. Licence: modified BSD, compatible with the AGPL host.
+file(GLOB WORLD_SOURCES third_party/world/src/*.cpp)
+add_library(world STATIC ${WORLD_SOURCES})
+target_include_directories(world PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/world/include)
+target_compile_definitions(world PRIVATE _USE_MATH_DEFINES)
+# Vendored code: keep the project's warning flags for our own sources
+# and silence warnings inside the library build only.
+if(MSVC)
+    target_compile_options(world PRIVATE /W0)
+else()
+    target_compile_options(world PRIVATE -w)
+endif()
+
 # Core/UI libraries (stage 1 modularization)
 add_library(pitchnet_core STATIC ${PITCHNET_CORE_SOURCES})
 add_library(pitchnet_ui STATIC ${PITCHNET_UI_SOURCES})
@@ -542,6 +559,7 @@ juce_add_binary_data(BinaryData SOURCES ${BINARY_DATA_FILES})
 target_link_libraries(pitchnet_core PUBLIC
     BinaryData
     rubberband
+    world
     juce::juce_gui_basics
     juce::juce_gui_extra
     juce::juce_audio_basics
