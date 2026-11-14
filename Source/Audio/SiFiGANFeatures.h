@@ -60,8 +60,25 @@ struct Stats
 
   bool isValid() const
   {
-    return mcepMean.size() == kMcepDim && mcepScale.size() == kMcepDim &&
-           bapMean.size() == kBapDim && bapScale.size() == kBapDim;
+    if (mcepMean.size() != kMcepDim || mcepScale.size() != kMcepDim ||
+        bapMean.size() != kBapDim || bapScale.size() != kBapDim)
+      return false;
+    // A hand-placed sidecar with a zero / non-finite scale would turn
+    // the normalisation into inf / NaN features and a NaN render; the
+    // module's rule for unusable input is to fail instead. (Scaler
+    // output from sklearn never looks like this: it stores 1.0 for a
+    // zero scale.)
+    auto usable = [](const std::vector<double> &mean,
+                     const std::vector<double> &scale) {
+      for (double v : mean)
+        if (!std::isfinite(v))
+          return false;
+      for (double v : scale)
+        if (!std::isfinite(v) || v <= 0.0)
+          return false;
+      return true;
+    };
+    return usable(mcepMean, mcepScale) && usable(bapMean, bapScale);
   }
 };
 

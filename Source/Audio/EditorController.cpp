@@ -1162,8 +1162,15 @@ void EditorController::analyzeAudio(
       PlatformPaths::getSiFiGanModelFile().existsAsFile() &&
       !ensureSiFiGanLoaded())
   {
-    LOG("analyzeAudio: SiFi-GAN model present but could not be loaded; "
-        "renders will fall back to the other AI routes");
+    LOG("analyzeAudio: SiFi-GAN model present but could not be loaded "
+        "(stats file " +
+        juce::String(PlatformPaths::getSiFiGanStatsFile().existsAsFile()
+                         ? "present"
+                         : "MISSING") +
+        ", vocoder error: " +
+        (siFiVocoder ? juce::String(siFiVocoder->getLastError())
+                     : juce::String("no vocoder")) +
+        "); renders will fall back to the other AI routes");
   }
 
   if (shuttingDown.load())
