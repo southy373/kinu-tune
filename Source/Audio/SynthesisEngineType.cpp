@@ -162,7 +162,17 @@ AiResynthesisSupport getAiResynthesisSupport()
   if (!OnnxRuntime::isAvailable())
     return AiResynthesisSupport::Unavailable;
 
-  if (!PlatformPaths::getBigVganModelFile().existsAsFile())
+  // AI Resynthesis is offered when at least one AI route can actually
+  // load: BigVGAN, or SiFi-GAN (model and stats sidecar - the vocoder
+  // refuses one without the other). Until batch 6 only the BigVGAN
+  // file counted, so a SiFi-GAN-only install was told AI was
+  // unavailable and the panel moved a SiFi-GAN selection to Classic.
+  const bool bigVganPresent =
+      PlatformPaths::getBigVganModelFile().existsAsFile();
+  const bool siFiPresent =
+      PlatformPaths::getSiFiGanModelFile().existsAsFile() &&
+      PlatformPaths::getSiFiGanStatsFile().existsAsFile();
+  if (!bigVganPresent && !siFiPresent)
     return AiResynthesisSupport::Unavailable;
 
 #if defined(_WIN32) && defined(USE_DIRECTML)
