@@ -105,6 +105,12 @@ jobs:
           foreach ($f in "fcpe.onnx", "cent_table.bin", "mel_filterbank.bin") {
             Copy-Item "Resources/models/$f" "$name/models/"
           }
+          # SiFi-GAN (Plan B) model and its stats sidecar, committed in
+          # the repository like the FCPE model (batch 6); the plug-in
+          # offers the SiFi-GAN engine only when both are present.
+          foreach ($f in "sifigan_115k_gather.onnx", "sifigan_kokoro_stats.json") {
+            Copy-Item "Resources/models/$f" "$name/models/"
+          }
           # AI Resynthesis models, generated above; the plug-in offers the
           # engine only when the main model is in the models folder, and
           # the ConvTranspose-free (noct) variant heads the vocoder's

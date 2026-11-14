@@ -41,6 +41,11 @@ Resources/models/*
 Resources/models/bigvgan_v2_44khz_128band.onnx
 # The ConvTranspose-free variant derived from it by the same script.
 Resources/models/bigvgan_v2_44khz_128band_noct.onnx
+# SiFi-GAN model and stats sidecar (batch 6): the project's own training
+# output, committed like the FCPE model so the release packaging can
+# ship them from the repository.
+!Resources/models/sifigan_115k_gather.onnx
+!Resources/models/sifigan_kokoro_stats.json
 
 tempcalude-*
 .claude
