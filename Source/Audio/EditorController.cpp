@@ -677,9 +677,16 @@ void EditorController::resynthesizeIncrementalAsync(
       !ensureSiFiGanLoaded())
   {
     // Not fatal: the synthesizer falls back to the BigVGAN / NSF
-    // routes when the SiFi-GAN model cannot be loaded.
+    // routes when the SiFi-GAN model cannot be loaded. The BigVGAN
+    // route only counts as a fallback when its model is actually
+    // loaded, and nothing else in this path loads it for a SiFi-GAN
+    // selection (the Vocoder branch below does it for its own engine
+    // only), so try the lazy load here; without it the render would
+    // end at the synthesizer's "no AI route loaded" failure even on
+    // machines where BigVGAN is installed.
     LOG("resynthesize: SiFi-GAN selected but its model is not loaded; "
         "the render falls back to the other AI routes");
+    ensureBigVganLoaded();
   }
   if (getSynthesisEngineType() == SynthesisEngineType::Vocoder &&
       !vocoder->isLoaded() && !ensureBigVganLoaded())
