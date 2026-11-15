@@ -147,7 +147,7 @@ public:
 
   const juce::String getApplicationName() override { return "FlexaTune"; }
 
-  const juce::String getApplicationVersion() override { return "0.6.0"; }
+  const juce::String getApplicationVersion() override { return "0.6.1"; }
 
   bool moreThanOneInstanceAllowed() override { return true; }
 
