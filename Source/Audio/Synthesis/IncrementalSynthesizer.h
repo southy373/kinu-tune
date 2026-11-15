@@ -72,6 +72,12 @@ public:
   // one (currently the BigVGAN and SiFi-GAN paths). Empty when it did not.
   std::string getLastSynthesisError() const;
 
+  // Record a failure reason in the same channel the getter reads.
+  // Public so EditorController can report a render it refuses before
+  // the synthesizer runs (a selected engine whose model cannot be
+  // loaded, batch 6.1); the synthesizer's own paths set it internally.
+  void setLastSynthesisError(std::string error);
+
 private:
   /// Compute synthesis range: find voiced segments overlapping dirty range,
   /// expand to include complete segments + padding frames.
@@ -92,8 +98,6 @@ private:
   std::vector<float> buildPitchRatioCurve(int startFrame, int endFrame,
                                           const std::vector<double> &sourceFrameMap,
                                           const std::vector<float> &targetF0) const;
-
-  void setLastSynthesisError(std::string error);
 
   // Run one request through the selected pitch-shift engine. Both
   // dispatch sites (classic output, BigVGAN scratch) go through here

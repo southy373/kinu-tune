@@ -676,17 +676,36 @@ void EditorController::resynthesizeIncrementalAsync(
   if (getSynthesisEngineType() == SynthesisEngineType::SiFiGAN &&
       !ensureSiFiGanLoaded())
   {
-    // Not fatal: the synthesizer falls back to the BigVGAN / NSF
-    // routes when the SiFi-GAN model cannot be loaded. The BigVGAN
-    // route only counts as a fallback when its model is actually
-    // loaded, and nothing else in this path loads it for a SiFi-GAN
-    // selection (the Vocoder branch below does it for its own engine
-    // only), so try the lazy load here; without it the render would
-    // end at the synthesizer's "no AI route loaded" failure even on
-    // machines where BigVGAN is installed.
+    // No silent fallback (user directive, 2026-11-15): a SiFi-GAN
+    // selection whose model cannot be loaded fails the render instead
+    // of rendering through another engine. The reason goes to the
+    // synthesizer's stored error, which the UI shows as the render
+    // failure detail (MainComponent::showRenderStatus); the
+    // synthesizer's own gate would fail the render too, but this
+    // earlier stop keeps the reason specific to the load attempt.
+    std::string reason =
+        siFiVocoder ? siFiVocoder->getLastError() : std::string();
+    if (reason.empty())
+    {
+      if (!PlatformPaths::getSiFiGanModelFile().existsAsFile())
+        reason = "model file not found: " +
+                 PlatformPaths::getSiFiGanModelFile()
+                     .getFullPathName()
+                     .toStdString();
+      else if (!PlatformPaths::getSiFiGanStatsFile().existsAsFile())
+        reason = "stats file not found: " +
+                 PlatformPaths::getSiFiGanStatsFile()
+                     .getFullPathName()
+                     .toStdString();
+    }
+    synth->setLastSynthesisError(
+        "SiFi-GAN is selected but its model is not loaded" +
+        (reason.empty() ? std::string() : ": " + reason));
     LOG("resynthesize: SiFi-GAN selected but its model is not loaded; "
-        "the render falls back to the other AI routes");
-    ensureBigVganLoaded();
+        "the render fails instead of falling back to another engine");
+    if (onComplete)
+      onComplete(false);
+    return;
   }
   if (getSynthesisEngineType() == SynthesisEngineType::Vocoder &&
       !vocoder->isLoaded() && !ensureBigVganLoaded())
@@ -1156,8 +1175,9 @@ void EditorController::analyzeAudio(
   }
 
   // SiFi-GAN is an optional route like BigVGAN, but unlike the Vocoder
-  // engine above a missing model never aborts the analysis: the render
-  // falls back to the other routes, so a failed load is only logged.
+  // engine above a missing model never aborts the analysis: analysis
+  // does not depend on SiFi-GAN, and the failure surfaces at render
+  // time instead (no silent fallback), so here it is only logged.
   if (getSynthesisEngineType() == SynthesisEngineType::SiFiGAN &&
       PlatformPaths::getSiFiGanModelFile().existsAsFile() &&
       !ensureSiFiGanLoaded())
@@ -1170,7 +1190,7 @@ void EditorController::analyzeAudio(
         ", vocoder error: " +
         (siFiVocoder ? juce::String(siFiVocoder->getLastError())
                      : juce::String("no vocoder")) +
-        "); renders will fall back to the other AI routes");
+        "); renders with SiFi-GAN selected will fail with this reason");
   }
 
   if (shuttingDown.load())

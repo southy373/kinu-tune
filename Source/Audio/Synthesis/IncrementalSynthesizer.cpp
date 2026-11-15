@@ -967,20 +967,39 @@ void IncrementalSynthesizer::synthesizeRegion(ProgressCallback onProgress,
   // a loaded one, and it does not want the mel.
   const bool usePsola = synthesisEngine == SynthesisEngineType::Psola;
 
+  // Plan B: SiFi-GAN runs only when its own engine is selected AND its
+  // model is loaded. The routes are mutually exclusive: a SiFi-GAN
+  // selection takes BigVGAN out of consideration entirely. In 0.6.0
+  // useBigVgan ignored the selection, so on any machine with the
+  // BigVGAN model loaded a SiFi-GAN selection silently rendered
+  // through BigVGAN and the SiFi-GAN route never ran (batch 6.1).
+  const bool siFiSelected = synthesisEngine == SynthesisEngineType::SiFiGAN;
+  const bool useSiFi = siFiSelected && siFiVocoder != nullptr &&
+                       siFiVocoder->isLoaded();
+
+  // No silent fallback (user directive, 2026-11-15): a SiFi-GAN
+  // selection whose model cannot run fails the render, with the reason
+  // stored where the UI reads it (EditorController::getLastSynthesisError,
+  // shown as the render failure detail). It must not quietly render
+  // through BigVGAN or the NSF vocoder instead.
+  if (siFiSelected && !useSiFi) {
+    const std::string reason =
+        siFiVocoder ? siFiVocoder->getLastError() : std::string();
+    setLastSynthesisError(
+        "SiFi-GAN is selected but its model is not loaded" +
+        (reason.empty() ? std::string() : ": " + reason));
+    if (onComplete)
+      onComplete(false);
+    return;
+  }
+
   // AI Resynthesis renders through BigVGAN whenever its model is loaded:
   // the PSOLA request below renders the edited pitch into a scratch
   // waveform, and BigVGAN regenerates that waveform from its own mel. The
   // NSF vocoder path further down runs only when BigVGAN is not loaded.
-  const bool useBigVgan =
-      !usePsola && bigVganVocoder != nullptr && bigVganVocoder->isLoaded();
-
-  // Plan B: SiFi-GAN runs only when its own engine is selected AND its
-  // model is loaded. A SiFi-GAN selection without the model falls
-  // through to the BigVGAN / NSF logic below, exactly as a BigVGAN
-  // selection without its model falls through to the NSF vocoder; the
-  // render log line below names the engine that actually ran.
-  const bool useSiFi = synthesisEngine == SynthesisEngineType::SiFiGAN &&
-                       siFiVocoder != nullptr && siFiVocoder->isLoaded();
+  const bool useBigVgan = !usePsola && !useSiFi &&
+                          bigVganVocoder != nullptr &&
+                          bigVganVocoder->isLoaded();
 
   if (!project || (!usePsola && !useBigVgan && !useSiFi && !vocoder)) {
     if (onComplete)
