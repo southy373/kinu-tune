@@ -80,7 +80,7 @@ jobs:
         with:
           name: ${{ env.ZIP_NAME }}-test
           path: ${{ env.ZIP_NAME }}.zip
-          retention-days: 7
+          retention-days: 3
 
   installer:
     needs: windows-x64
