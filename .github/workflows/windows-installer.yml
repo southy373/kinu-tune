@@ -107,7 +107,7 @@ jobs:
         with:
           name: ${{ env.SETUP_NAME }}
           path: Output/${{ env.SETUP_NAME }}
-          retention-days: 7
+          retention-days: 3
 
       - name: Attach Kinu Tune installer to release
         if: ${{ inputs.attach && !inputs.pure_tune }}
